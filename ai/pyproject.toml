@@ -1,0 +1,42 @@
+[project]
+name = "multi-agents-ai"
+version = "0.1.0"
+description = "NPC 대화 LoRA 학습/추론"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "torch==2.5.1",
+    "transformers>=4.46.0,<4.50",
+    "peft>=0.13.2,<0.15",
+    "trl>=0.12.0,<0.13",
+    "accelerate>=1.0.1,<1.5",
+    "bitsandbytes>=0.44.1",
+    "datasets>=3.0.2,<4",
+    "chromadb>=0.5.15",
+    "sentence-transformers>=3.2.1,<4",
+    "fastapi>=0.115.4",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.1",
+    "pydantic>=2.9.2",
+    "pyyaml>=6.0.2",
+    "python-dotenv>=1.0.1",
+    "tqdm>=4.66.6",
+    "huggingface-hub>=0.26.2,<0.28",
+]
+
+[dependency-groups]
+dev = [
+    "ipython>=8.29.0",
+    "ruff>=0.7.2",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

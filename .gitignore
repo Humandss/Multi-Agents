@@ -104,3 +104,22 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Python (ai/)
+ai/.venv/
+ai/**/__pycache__/
+ai/**/*.py[cod]
+ai/**/*.egg-info/
+ai/.ipynb_checkpoints/
+ai/.ruff_cache/
+ai/.mypy_cache/
+ai/.pytest_cache/
+ai/data/processed/
+ai/output/
+ai/models/
+ai/.cache/
+ai/.env
+ai/.env.local
+
+# Claude Code worktree metadata
+.claude/
