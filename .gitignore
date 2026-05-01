@@ -115,6 +115,7 @@ ai/.ruff_cache/
 ai/.mypy_cache/
 ai/.pytest_cache/
 ai/data/processed/
+ai/data/chroma/
 ai/output/
 ai/models/
 ai/.cache/
