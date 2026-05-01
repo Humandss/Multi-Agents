@@ -10,27 +10,42 @@ RAW_DIR = ROOT / "data" / "raw"
 PROCESSED_DIR = ROOT / "data" / "processed"
 
 
+def _load_rows(path):
+    rows = []
+    with path.open(encoding="utf-8") as f:
+        for i, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            row["_src"] = path.name
+            row["_line"] = i
+            rows.append(row)
+    return rows
+
+
 def convert_one(character):
     src = RAW_DIR / f"{character}.jsonl"
+    src_rag = RAW_DIR / f"{character}_rag.jsonl"
     dst = PROCESSED_DIR / f"{character}.jsonl"
     dst.parent.mkdir(parents=True, exist_ok=True)
 
     if not src.exists():
         raise FileNotFoundError(f"원본 없음: {src}")
 
+    rows = _load_rows(src)
+    if src_rag.exists():
+        rows.extend(_load_rows(src_rag))
+
     counts = {}
     n = 0
-    with src.open(encoding="utf-8") as fin, dst.open("w", encoding="utf-8") as fout:
-        for i, line in enumerate(fin, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
+    with dst.open("w", encoding="utf-8") as fout:
+        for row in rows:
             user_text = row.get("input", "").strip()
             asst_text = row.get("output", "").strip()
             cat = row.get("category", "unknown")
             if not user_text or not asst_text:
-                print(f"  skip {src.name}:{i} (빈값)")
+                print(f"  skip {row['_src']}:{row['_line']} (빈값)")
                 continue
             sample = {
                 "messages": [
