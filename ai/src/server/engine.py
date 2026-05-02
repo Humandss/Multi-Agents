@@ -115,7 +115,11 @@ class NpcServer:
             raise ValueError(f"알 수 없는 NPC: {npc}")
 
         t0 = time.time()
-        retrieved = self.retrievers[npc].search(user_text, k=self.retrieval_k)
+        # 같은 NPC와 대화 중에는 자기가 들은 플레이어 발화(DIALOGUE)를 회상하지 않음.
+        # (전파를 거쳐 다른 NPC가 PROPAGATION으로 다시 받게 되면 그건 회상 가능)
+        retrieved = self.retrievers[npc].search(
+            user_text, k=self.retrieval_k, exclude_sources={"dialogue"}
+        )
         augmented = build_user_prompt(retrieved, user_text)
 
         messages = list(history or [])
@@ -162,12 +166,19 @@ class NpcServer:
 
     def _save_player_turn(self, npc: str, user_text: str) -> None:
         text = user_text.strip()
-        if len(text) < 5:
-            return  # 너무 짧으면 저장 X
+        if len(text) < 8:
+            return  # 인사·감탄사는 저장 X (전파 가치 없음)
+        # 길이 따라 importance 차등: 길수록 정보성 높다 가정
+        if len(text) >= 30:
+            importance = 7
+        elif len(text) >= 15:
+            importance = 6
+        else:
+            importance = 5
         entry = MemoryEntry(
             id=f"dlg_{uuid.uuid4().hex[:8]}",
             text=f"플레이어가 말했다: {text}",
-            importance=5,
+            importance=importance,
             timestamp=datetime.now(timezone.utc),
             source=MemorySource.DIALOGUE,
             metadata={"player": True},

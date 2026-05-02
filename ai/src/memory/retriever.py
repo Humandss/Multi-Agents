@@ -33,12 +33,21 @@ class MemoryRetriever:
         self.w_rec = w_rec
         self.min_similarity = min_similarity
 
-    def search(self, query: str, k: int = 5, pool: int = 20):
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        pool: int = 20,
+        exclude_sources: set[str] | None = None,
+    ):
         """pool개 후보 중 의미 유사도 임계값 이상 + 가중 점수 상위 k개 반환.
 
         min_similarity 이하 매칭은 무관한 메모리로 간주하고 버린다.
         예: "안녕하세요"는 어떤 메모리와도 충분히 유사하지 않아 빈 리스트 반환 →
         LoRA는 평소 인사 패턴으로 응답.
+
+        exclude_sources: 특정 소스 (예: 'dialogue') 메모리는 결과에서 제외.
+        본인이 한 말을 그대로 회상하는 어색한 루프 방지용.
         """
         results = self.store.query(query, k=pool)
         ids = results["ids"][0]
@@ -52,6 +61,8 @@ class MemoryRetriever:
         now = datetime.now(timezone.utc)
         scored = []
         for id_, doc, meta, dist in zip(ids, docs, metas, dists):
+            if exclude_sources and meta.get("source") in exclude_sources:
+                continue
             sim = max(0.0, 1.0 - dist)
             if sim < self.min_similarity:
                 continue
