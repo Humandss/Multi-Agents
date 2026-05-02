@@ -96,7 +96,7 @@ namespace NpcChat
 
             if (showRetrievedMemories && resp.memories_used != null && resp.memories_used.Length > 0)
             {
-                AppendLog($"<size=80%><color=#888>  ↳ 회상 {resp.memories_used.Length}개:");
+                AppendLog($"<size=80%><color=#888>  ↳ 회상 {resp.memories_used.Length}개:</color></size>");
                 foreach (var m in resp.memories_used)
                 {
                     AppendLog($"<size=80%><color=#888>     [{m.importance}/{m.source}] {Truncate(m.text, 60)}</color></size>");
