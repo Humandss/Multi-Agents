@@ -19,10 +19,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
 BASE_REVISION = "496aef060b296b34c6b0035149f5af9e2b8c168c"
 
-TRANSFORM_PROMPT = (
+PROMPT_FACT = (
     "다음 사실을 다른 마을 사람에게 한 마디로 전달한다면 어떻게 말할지 한 줄로만 답하세요. "
+    "사람 이름과 장소 이름은 절대 바꾸지 말고, 어조만 너답게 바꾸세요. "
     "다른 설명이나 라벨은 붙이지 마세요.\n\n"
     "사실: {memory}\n\n"
+    "당신의 한 마디:"
+)
+
+PROMPT_DIALOGUE = (
+    "플레이어가 너에게 다음과 같이 말했다. 이 말에 담긴 사실 정보를 다른 마을 사람에게 "
+    "한 마디로 전달한다면 어떻게 말할지 한 줄로만 답하세요. "
+    "사람 이름과 장소 이름은 절대 바꾸지 말고, 어조만 너답게 바꾸세요. "
+    "사실 정보가 없거나 단순 인사면 빈 답변을 출력하세요.\n\n"
+    "플레이어 발언: {memory}\n\n"
     "당신의 한 마디:"
 )
 
@@ -64,13 +74,27 @@ class PersonaTransformer:
 
         self._cache = {}
 
-    def transform(self, sender_npc: str, memory_text: str, max_new_tokens: int = 80) -> str:
-        cache_key = (sender_npc, memory_text)
+    def transform(
+        self,
+        sender_npc: str,
+        memory_text: str,
+        source: str = "observation",
+        max_new_tokens: int = 80,
+    ) -> str:
+        cache_key = (sender_npc, memory_text, source)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
         self.model.set_adapter(sender_npc)
-        prompt = TRANSFORM_PROMPT.format(memory=memory_text)
+        # 메모리 prefix 정리
+        clean = memory_text
+        if clean.startswith("플레이어가 말했다: "):
+            clean = clean[len("플레이어가 말했다: "):]
+        elif "한테 들었다: " in clean:
+            clean = clean.split("한테 들었다: ", 1)[1]
+
+        template = PROMPT_DIALOGUE if source == "dialogue" else PROMPT_FACT
+        prompt = template.format(memory=clean)
         messages = [{"role": "user", "content": prompt}]
         inputs = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
@@ -81,9 +105,9 @@ class PersonaTransformer:
                 inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
-                temperature=0.7,
+                temperature=0.4,
                 top_p=0.9,
-                repetition_penalty=1.1,
+                repetition_penalty=1.15,
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             )
         text = self.tokenizer.decode(
@@ -92,7 +116,7 @@ class PersonaTransformer:
         # 첫 줄만 + 따옴표 정리
         text = text.split("\n")[0].strip().strip('"').strip("'")
         if not text:
-            text = memory_text  # fallback
+            text = clean  # fallback: 원문
 
         self._cache[cache_key] = text
         return text

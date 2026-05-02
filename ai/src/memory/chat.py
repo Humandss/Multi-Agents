@@ -19,12 +19,26 @@ def build_user_prompt(retrieved, user_text):
     LoRA가 학습 데이터(짧은 user-assistant 쌍)에 강하게 fit돼있어서
     구조화된 프롬프트(`[내가 알고 있는 사실]` 같은) 안에 정보를 넣으면 무시한다.
     그래서 검색된 사실을 자연어 평서문으로 붙여서 LoRA가 문맥으로 받아들이게 한다.
+
+    개선:
+    - 메모리 source별 자연어 정리 (플레이어 발화 → "전에 듣기로", propagation → 그대로)
+    - 최대 3개까지, "; "로 구분
+    - "떠올려보니 —" prefix로 회상 분위기
     """
     if not retrieved:
         return user_text
 
-    facts = " ".join(m["text"] for m in retrieved[:2])
-    return f"({facts}) {user_text}"
+    parts = []
+    for m in retrieved[:3]:
+        text = m["text"].strip()
+        if text.startswith("플레이어가 말했다:"):
+            content = text[len("플레이어가 말했다:"):].strip()
+            parts.append(f"전에 듣기로 {content}")
+        else:
+            parts.append(text)
+
+    facts = "; ".join(parts)
+    return f"(떠올려보니 — {facts}) {user_text}"
 
 
 class NpcChat:

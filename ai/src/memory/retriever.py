@@ -22,16 +22,25 @@ class MemoryRetriever:
     def __init__(
         self,
         store: MemoryStore,
-        w_sim=0.75,
+        w_sim=0.70,
         w_imp=0.10,
-        w_rec=0.15,
-        min_similarity: float = 0.55,
+        w_rec=0.20,
+        min_similarity: float = 0.50,
+        propagation_bonus: float = 0.05,
     ):
+        """가중점수: w_sim*sim + w_imp*imp + w_rec*recency + propagation_bonus(if propagation).
+
+        - w_sim 0.75 → 0.70 (의미 유사도 비중 약간 ↓, 다양성 ↑)
+        - w_rec 0.15 → 0.20 (최근 propagation 정보 우선)
+        - min_similarity 0.55 → 0.50 (간접 매칭도 통과 가능)
+        - propagation_bonus 신규 — 체인 거친 정보가 더 잘 떠오르도록
+        """
         self.store = store
         self.w_sim = w_sim
         self.w_imp = w_imp
         self.w_rec = w_rec
         self.min_similarity = min_similarity
+        self.propagation_bonus = propagation_bonus
 
     def search(
         self,
@@ -72,10 +81,19 @@ class MemoryRetriever:
             if ts is None:
                 rec = 0.5
             else:
+                # 7일 이내 메모리에 강한 가중 (게임 내 시뮬 시간 기준)
                 days = (now - ts).days
-                rec = max(0.0, 1.0 - days / 30.0)
+                if days <= 1:
+                    rec = 1.0
+                elif days <= 7:
+                    rec = 0.85
+                else:
+                    rec = max(0.0, 1.0 - days / 30.0)
 
             score = self.w_sim * sim + self.w_imp * imp + self.w_rec * rec
+            # propagation 소스 보너스 — 다른 NPC한테 들은 정보가 더 잘 떠오름
+            if meta.get("source") == "propagation":
+                score += self.propagation_bonus
             scored.append({
                 "id": id_,
                 "text": doc,
