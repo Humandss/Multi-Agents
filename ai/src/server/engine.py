@@ -117,9 +117,10 @@ class NpcServer:
                 inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
-                temperature=0.5,        # 0.7 → 0.5 학습 분포에 더 가깝게 (창의적 일탈 ↓)
-                top_p=0.85,             # 0.9 → 0.85 약간 보수적
-                repetition_penalty=1.1,
+                temperature=0.4,        # 0.3은 반복적, 0.5는 hallucination — 중간
+                top_p=0.85,
+                top_k=40,
+                repetition_penalty=1.1,  # 0.4면 다양성 약하니 다시 1.1로 반복 억제
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             )
         text = self.tokenizer.decode(
