@@ -19,14 +19,27 @@ def _parse_ts(s):
 
 
 class MemoryRetriever:
-    def __init__(self, store: MemoryStore, w_sim=0.75, w_imp=0.10, w_rec=0.15):
+    def __init__(
+        self,
+        store: MemoryStore,
+        w_sim=0.75,
+        w_imp=0.10,
+        w_rec=0.15,
+        min_similarity: float = 0.50,
+    ):
         self.store = store
         self.w_sim = w_sim
         self.w_imp = w_imp
         self.w_rec = w_rec
+        self.min_similarity = min_similarity
 
     def search(self, query: str, k: int = 5, pool: int = 20):
-        """pool개 후보 중 가중 점수 상위 k개 반환."""
+        """pool개 후보 중 의미 유사도 임계값 이상 + 가중 점수 상위 k개 반환.
+
+        min_similarity 이하 매칭은 무관한 메모리로 간주하고 버린다.
+        예: "안녕하세요"는 어떤 메모리와도 충분히 유사하지 않아 빈 리스트 반환 →
+        LoRA는 평소 인사 패턴으로 응답.
+        """
         results = self.store.query(query, k=pool)
         ids = results["ids"][0]
         if not ids:
@@ -40,6 +53,8 @@ class MemoryRetriever:
         scored = []
         for id_, doc, meta, dist in zip(ids, docs, metas, dists):
             sim = max(0.0, 1.0 - dist)
+            if sim < self.min_similarity:
+                continue
             imp = float(meta.get("importance", 5)) / 10.0
 
             ts = _parse_ts(meta.get("timestamp", ""))
