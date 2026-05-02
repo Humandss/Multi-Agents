@@ -25,7 +25,7 @@ class MemoryRetriever:
         w_sim=0.75,
         w_imp=0.10,
         w_rec=0.15,
-        min_similarity: float = 0.50,
+        min_similarity: float = 0.55,
     ):
         self.store = store
         self.w_sim = w_sim
