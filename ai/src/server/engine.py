@@ -88,8 +88,14 @@ class NpcServer:
         self,
         npc: str,
         user_text: str,
+        history: list[dict] | None = None,
         max_new_tokens: int = 200,
     ) -> dict:
+        """단일 응답 생성.
+
+        history: 이전 대화 turn들. [{"role": "user"|"assistant", "content": "..."}, ...]
+                 None이면 첫 턴으로 처리. 캐릭터 어조와 맥락 유지를 위해 사용.
+        """
         if npc not in self.characters:
             raise ValueError(f"알 수 없는 NPC: {npc}")
 
@@ -97,8 +103,11 @@ class NpcServer:
         retrieved = self.retrievers[npc].search(user_text, k=self.retrieval_k)
         augmented = build_user_prompt(retrieved, user_text)
 
+        # history는 원본 텍스트 유지 (fact prefix 없음), 현재 턴만 augmented
+        messages = list(history or [])
+        messages.append({"role": "user", "content": augmented})
+
         self.model.set_adapter(npc)
-        messages = [{"role": "user", "content": augmented}]
         inputs = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
         ).to(self.model.device)

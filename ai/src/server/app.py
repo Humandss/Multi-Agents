@@ -49,6 +49,9 @@ def create_app() -> FastAPI:
             for npc in engine.characters
         })
 
+    # 한 세션 = 한 대화. 직전 6쌍(=12 메시지) 유지해서 멀티턴 흐름 살림.
+    HISTORY_TURNS = 6
+
     @app.websocket("/ws/{npc_name}")
     async def chat_ws(ws: WebSocket, npc_name: str):
         if npc_name not in engine.characters:
@@ -57,6 +60,8 @@ def create_app() -> FastAPI:
 
         await ws.accept()
         await ws.send_json({"type": "ready", "npc": npc_name})
+
+        history: list[dict] = []
 
         try:
             while True:
@@ -67,7 +72,12 @@ def create_app() -> FastAPI:
                     await ws.send_json({"type": "error", "message": "invalid JSON"})
                     continue
 
-                if msg.get("type") != "chat":
+                msg_type = msg.get("type")
+                if msg_type == "reset":
+                    history.clear()
+                    await ws.send_json({"type": "reset_ok"})
+                    continue
+                if msg_type != "chat":
                     await ws.send_json({"type": "error", "message": "unsupported type"})
                     continue
 
@@ -77,10 +87,17 @@ def create_app() -> FastAPI:
                     continue
 
                 try:
-                    result = engine.respond(npc_name, user_text)
+                    result = engine.respond(npc_name, user_text, history=history)
                 except Exception as e:
                     await ws.send_json({"type": "error", "message": str(e)})
                     continue
+
+                # 다음 턴을 위해 history 갱신 (원본 user_text + assistant 응답)
+                history.append({"role": "user", "content": user_text})
+                history.append({"role": "assistant", "content": result["text"]})
+                # 최근 N쌍만 유지
+                if len(history) > HISTORY_TURNS * 2:
+                    history = history[-HISTORY_TURNS * 2:]
 
                 await ws.send_json({"type": "response", **result})
 
