@@ -117,10 +117,11 @@ class NpcServer:
                 inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
-                temperature=0.4,        # 0.3은 반복적, 0.5는 hallucination — 중간
-                top_p=0.85,
-                top_k=40,
-                repetition_penalty=1.1,  # 0.4면 다양성 약하니 다시 1.1로 반복 억제
+                temperature=0.5,
+                top_p=0.9,
+                top_k=50,
+                repetition_penalty=1.15,  # '...' 패턴 자가증폭 억제
+                no_repeat_ngram_size=4,   # 4-gram 반복 차단 (단답 루프 방지)
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             )
         text = self.tokenizer.decode(
