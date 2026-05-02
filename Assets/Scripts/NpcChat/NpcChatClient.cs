@@ -16,7 +16,8 @@ namespace NpcChat
         public string Npc { get; private set; }
 
         public event Action OnReady;
-        public event Action<ChatResponse> OnResponse;
+        public event Action<ServerMessage> OnResponse;       // type=response
+        public event Action<ServerMessage> OnTickEvents;     // type=tick_events
         public event Action<string> OnError;
         public event Action OnClosed;
 
@@ -37,17 +38,16 @@ namespace NpcChat
             _ws.OnClose += (_) => { Debug.Log($"[NpcChat] {Npc} 연결 종료"); OnClosed?.Invoke(); };
             _ws.OnMessage += HandleMessage;
 
-            // 비동기 연결 — await하면 OnOpen 콜백이 먼저 fire됨
             _ = _ws.Connect();
         }
 
         private void HandleMessage(byte[] bytes)
         {
             string json = System.Text.Encoding.UTF8.GetString(bytes);
-            ChatResponse msg;
+            ServerMessage msg;
             try
             {
-                msg = JsonUtility.FromJson<ChatResponse>(json);
+                msg = JsonUtility.FromJson<ServerMessage>(json);
             }
             catch (Exception e)
             {
@@ -62,6 +62,11 @@ namespace NpcChat
                     break;
                 case "response":
                     OnResponse?.Invoke(msg);
+                    break;
+                case "tick_events":
+                    OnTickEvents?.Invoke(msg);
+                    break;
+                case "reset_ok":
                     break;
                 case "error":
                     OnError?.Invoke(msg.message);
@@ -83,7 +88,17 @@ namespace NpcChat
             await _ws.SendText(json);
         }
 
-        /// <summary>메인 스레드 Update에서 매 프레임 호출 필수 (non-WebGL).</summary>
+        public async Task SendTimeAdvanceAsync()
+        {
+            if (!IsOpen)
+            {
+                OnError?.Invoke("연결이 열려있지 않습니다");
+                return;
+            }
+            string json = JsonUtility.ToJson(new TimeAdvanceRequest());
+            await _ws.SendText(json);
+        }
+
         public void DispatchQueue()
         {
             #if !UNITY_WEBGL || UNITY_EDITOR

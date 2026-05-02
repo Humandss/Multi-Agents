@@ -2,17 +2,21 @@
 
 엔드포인트:
   GET  /healthz           서버 상태 + 로딩된 NPC 목록
-  GET  /npcs              NPC별 메모리 수 등 메타데이터
-  WS   /ws/{npc_name}     NPC와 대화
+  GET  /npcs              NPC별 메모리 수
+  WS   /ws/{npc_name}     NPC와 대화 + 시간 진행 명령
 
 WebSocket 프로토콜:
   Client -> Server (JSON):
-    {"type": "chat", "text": "..."}
+    {"type": "chat",         "text": "..."}        대화
+    {"type": "reset"}                              세션 history 초기화
+    {"type": "time_advance"}                       하루 진행 (정보 전파 tick)
+
   Server -> Client (JSON):
-    {"type": "response", "npc": "...", "text": "...",
-     "memories_used": [{text, importance, source}, ...],
-     "latency_ms": int}
-    {"type": "error", "message": "..."}
+    {"type": "ready",        "npc": "..."}
+    {"type": "response",     "npc": "...", "text": "...", "memories_used": [...], "latency_ms": int}
+    {"type": "reset_ok"}
+    {"type": "tick_events",  "day": int, "events": [...], "memory_counts": {...}}
+    {"type": "error",        "message": "..."}
 """
 
 import json
@@ -76,6 +80,31 @@ def create_app() -> FastAPI:
                 if msg_type == "reset":
                     history.clear()
                     await ws.send_json({"type": "reset_ok"})
+                    continue
+                if msg_type == "time_advance":
+                    try:
+                        result = engine.tick()
+                    except Exception as e:
+                        await ws.send_json({"type": "error", "message": str(e)})
+                        continue
+                    # event 직렬화 (importance 등 숫자만 그대로, 텍스트는 짧게)
+                    serialized = []
+                    for ev in result["events"]:
+                        serialized.append({
+                            "day": ev["day"],
+                            "from": ev["from"],
+                            "to": ev["to"],
+                            "original": ev["original"][:120],
+                            "transformed": ev["transformed"][:120],
+                            "importance_before": ev["importance_before"],
+                            "importance_after": ev["importance_after"],
+                        })
+                    await ws.send_json({
+                        "type": "tick_events",
+                        "day": result["day"],
+                        "events": serialized,
+                        "memory_counts": engine.memory_counts(),
+                    })
                     continue
                 if msg_type != "chat":
                     await ws.send_json({"type": "error", "message": "unsupported type"})

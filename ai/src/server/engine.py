@@ -2,28 +2,34 @@
 
 베이스 EXAONE 1개 + 5종 LoRA 어댑터를 PEFT의 load_adapter / set_adapter로
 스위칭하면서 사용한다. 메모리 store/retriever도 NPC별로 보유.
-
-VRAM 사용량 (RTX 4070 Ti 12GB 기준):
-  - 베이스 (4bit): ~2GB
-  - LoRA 어댑터 5개: ~400MB
-  - KV cache + 임베딩 모델: ~1GB
-  - 합계: ~3.5GB → 충분히 동작
+또한 NPC 간 정보 전파(시간 기반)도 동일 프로세스에서 수행한다.
 """
 
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from ..memory import MemoryRetriever, MemoryStore
+from ..memory import MemoryEntry, MemoryRetriever, MemorySource, MemoryStore
 from ..memory.chat import build_user_prompt
+from ..propagation.graph import RelationGraph
+from ..propagation.simulator import PropagationSimulator
 
 BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct"
 BASE_REVISION = "8e6fc27d1910b526b5d48a2aa129b08a0293df5e"
 
 DEFAULT_CHARACTERS = ["elias", "hermann", "mathilda", "finn", "bernhardt"]
+
+TRANSFORM_PROMPT = (
+    "다음 사실을 다른 마을 사람에게 한 마디로 전달한다면 어떻게 말할지 한 줄로만 답하세요. "
+    "다른 설명이나 라벨은 붙이지 마세요.\n\n"
+    "사실: {memory}\n\n"
+    "당신의 한 마디:"
+)
 
 
 class NpcServer:
@@ -31,6 +37,7 @@ class NpcServer:
         self,
         adapters_dir: Path,
         chroma_dir: Path,
+        relations_path: Path | None = None,
         characters: list[str] | None = None,
         retrieval_k: int = 3,
     ):
@@ -65,7 +72,6 @@ class NpcServer:
             torch_dtype=torch.bfloat16,
         )
 
-        # 첫 어댑터를 default로, 나머지는 load_adapter
         first = self.characters[0]
         print(f"[engine] LoRA 로딩 ({len(self.characters)}종)...")
         self.model = PeftModel.from_pretrained(
@@ -84,6 +90,20 @@ class NpcServer:
             self.retrievers[npc] = MemoryRetriever(store)
             print(f"  {npc}: 메모리 {store.count()}개")
 
+        # 정보 전파 그래프
+        if relations_path is None:
+            relations_path = Path(__file__).resolve().parents[2] / "configs" / "relations.yaml"
+        if relations_path.exists():
+            self.graph = RelationGraph.load(relations_path)
+            print(f"[engine] 관계 그래프 로드 ({len(self.graph.edges())} edges)")
+        else:
+            self.graph = None
+            print("[engine] 관계 그래프 없음, propagation 비활성")
+
+        self.day = 0
+        self._transform_cache: dict[tuple[str, str], str] = {}
+
+    # ---------- 응답 생성 ----------
     def respond(
         self,
         npc: str,
@@ -91,11 +111,6 @@ class NpcServer:
         history: list[dict] | None = None,
         max_new_tokens: int = 200,
     ) -> dict:
-        """단일 응답 생성.
-
-        history: 이전 대화 turn들. [{"role": "user"|"assistant", "content": "..."}, ...]
-                 None이면 첫 턴으로 처리. 캐릭터 어조와 맥락 유지를 위해 사용.
-        """
         if npc not in self.characters:
             raise ValueError(f"알 수 없는 NPC: {npc}")
 
@@ -103,7 +118,6 @@ class NpcServer:
         retrieved = self.retrievers[npc].search(user_text, k=self.retrieval_k)
         augmented = build_user_prompt(retrieved, user_text)
 
-        # history는 원본 텍스트 유지 (fact prefix 없음), 현재 턴만 augmented
         messages = list(history or [])
         messages.append({"role": "user", "content": augmented})
 
@@ -120,14 +134,17 @@ class NpcServer:
                 temperature=0.5,
                 top_p=0.9,
                 top_k=50,
-                repetition_penalty=1.15,  # '...' 패턴 자가증폭 억제
-                no_repeat_ngram_size=4,   # 4-gram 반복 차단 (단답 루프 방지)
+                repetition_penalty=1.15,
+                no_repeat_ngram_size=4,
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
             )
         text = self.tokenizer.decode(
             out[0][inputs.shape[1]:], skip_special_tokens=True
         ).strip()
         latency_ms = int((time.time() - t0) * 1000)
+
+        # 플레이어 발화를 NPC의 DIALOGUE 메모리로 저장 (다음 tick에서 전파 후보)
+        self._save_player_turn(npc, user_text)
 
         return {
             "npc": npc,
@@ -142,3 +159,72 @@ class NpcServer:
             ],
             "latency_ms": latency_ms,
         }
+
+    def _save_player_turn(self, npc: str, user_text: str) -> None:
+        text = user_text.strip()
+        if len(text) < 5:
+            return  # 너무 짧으면 저장 X
+        entry = MemoryEntry(
+            id=f"dlg_{uuid.uuid4().hex[:8]}",
+            text=f"플레이어가 말했다: {text}",
+            importance=5,
+            timestamp=datetime.now(timezone.utc),
+            source=MemorySource.DIALOGUE,
+            metadata={"player": True},
+        )
+        self.stores[npc].add(entry)
+
+    # ---------- PropagationSimulator transformer 인터페이스 ----------
+    def transform(self, sender_npc: str, memory_text: str, max_new_tokens: int = 80) -> str:
+        """sender NPC의 어조로 메모리를 다시 표현 (정보 전파 시 사용)."""
+        cache_key = (sender_npc, memory_text)
+        if cache_key in self._transform_cache:
+            return self._transform_cache[cache_key]
+
+        self.model.set_adapter(sender_npc)
+        prompt = TRANSFORM_PROMPT.format(memory=memory_text)
+        messages = [{"role": "user", "content": prompt}]
+        inputs = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            out = self.model.generate(
+                inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                repetition_penalty=1.1,
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            )
+        text = self.tokenizer.decode(
+            out[0][inputs.shape[1]:], skip_special_tokens=True
+        ).strip()
+        text = text.split("\n")[0].strip().strip('"').strip("'")
+        if not text:
+            text = memory_text  # fallback
+        self._transform_cache[cache_key] = text
+        return text
+
+    # ---------- 시간 진행 (정보 전파 tick) ----------
+    def tick(self, day: int | None = None) -> dict:
+        """하루치 정보 전파 시뮬레이션 실행 + 이벤트 반환."""
+        if self.graph is None:
+            return {"day": self.day, "events": [], "error": "관계 그래프 없음"}
+        if day is None:
+            self.day += 1
+            day = self.day
+        else:
+            self.day = day
+
+        sim = PropagationSimulator(
+            graph=self.graph,
+            stores=self.stores,
+            transformer=self,
+        )
+        events = sim.tick(day)
+        return {"day": day, "events": events}
+
+    def memory_counts(self) -> dict[str, int]:
+        return {npc: self.stores[npc].count() for npc in self.characters}
