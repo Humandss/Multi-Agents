@@ -137,17 +137,33 @@ class NpcServer:
             print(f"[engine] 페르소나 정의 로드 실패: {e}")
 
     def _build_system_prompt(self, npc: str) -> str:
-        """NPC별 system prompt — 페르소나 마커 + 영어 환각 방지 + 회상 활용 안내."""
+        """NPC별 system prompt — 페르소나 마커(말투/금기) + 다른 NPC 직업명 + 회상 활용 안내.
+
+        주의: 시스템 프롬프트가 너무 길거나 LoRA 학습 분포에서 멀어지면 출력이 깨짐
+        (영어 code-switch, 채팅 템플릿 토큰 leak, 박스 문자 spam 발생함).
+        한 번 회귀 겪고 나서 보수적으로 줄임 — 마커는 간결하게, 다른 NPC는 직업명만.
+        """
         p = self.personas.get(npc, {})
         desc = p.get("description", "")
         m = p.get("markers", {})
         tone = ", ".join(m.get("tone", []))
         avoid = ", ".join(m.get("avoid", []))
+        starts = ", ".join(m.get("speech_start", []))
+        ends = ", ".join(m.get("speech_end", []))
+
+        # 다른 NPC 직업명만 (description 첫 마디만 추출)
+        role_brief = {
+            n: self.personas[n].get("description", "").split(".")[0].strip()
+            for n in self.personas if n != npc
+        }
+        others = ", ".join(f"{n}={role_brief[n]}" for n in role_brief if role_brief[n])
 
         return (
             f"당신은 {npc}입니다. {desc}\n"
             f"어조: {tone}.\n"
             f"피해야 할 것: {avoid}.\n"
+            f"말투 마커: 시작={starts} | 어미={ends}.\n"
+            f"다른 마을 사람: {others}. 이들의 직업을 바꾸지 마세요.\n"
             "사용자 메시지 앞 괄호 안에 당신이 떠올린 정보가 있다면, 그 정보를 자연스럽게 답에 녹이세요. "
             "한국어로만 답하시오. 영어 단어, 외국어 표현 절대 금지. "
             "캐릭터답게 짧고 자연스럽게."
