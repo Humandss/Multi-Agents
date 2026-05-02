@@ -9,8 +9,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from .retriever import MemoryRetriever
 from .store import MemoryStore
 
-BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct"
-BASE_REVISION = "8e6fc27d1910b526b5d48a2aa129b08a0293df5e"
+BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
+BASE_REVISION = "496aef060b296b34c6b0035149f5af9e2b8c168c"
 
 
 def build_user_prompt(retrieved, user_text):

@@ -16,8 +16,8 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct"
-BASE_REVISION = "8e6fc27d1910b526b5d48a2aa129b08a0293df5e"
+BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
+BASE_REVISION = "496aef060b296b34c6b0035149f5af9e2b8c168c"
 
 TRANSFORM_PROMPT = (
     "다음 사실을 다른 마을 사람에게 한 마디로 전달한다면 어떻게 말할지 한 줄로만 답하세요. "

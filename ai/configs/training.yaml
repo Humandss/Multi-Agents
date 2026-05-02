@@ -1,5 +1,5 @@
-base_model: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
-base_model_revision: 8e6fc27d1910b526b5d48a2aa129b08a0293df5e
+base_model: LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct
+base_model_revision: 496aef060b296b34c6b0035149f5af9e2b8c168c
 
 quantization:
   load_in_4bit: true
@@ -23,14 +23,14 @@ lora:
 
 train:
   num_epochs: 5
-  per_device_batch_size: 2
-  gradient_accumulation_steps: 4
+  per_device_batch_size: 1
+  gradient_accumulation_steps: 8
   gradient_checkpointing: true
   learning_rate: 2.0e-4
   lr_scheduler_type: cosine
   warmup_ratio: 0.1
   weight_decay: 0.01
-  max_seq_length: 1024
+  max_seq_length: 768
   optim: paged_adamw_8bit
   bf16: true
   logging_steps: 10

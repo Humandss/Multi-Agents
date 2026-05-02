@@ -19,8 +19,8 @@ from ..memory.chat import build_user_prompt
 from ..propagation.graph import RelationGraph
 from ..propagation.simulator import PropagationSimulator
 
-BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct"
-BASE_REVISION = "8e6fc27d1910b526b5d48a2aa129b08a0293df5e"
+BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
+BASE_REVISION = "496aef060b296b34c6b0035149f5af9e2b8c168c"
 
 DEFAULT_CHARACTERS = ["elias", "hermann", "mathilda", "finn", "bernhardt"]
 
