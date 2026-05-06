@@ -62,7 +62,7 @@ class NpcServer:
         chroma_dir: Path,
         relations_path: Path | None = None,
         characters: list[str] | None = None,
-        retrieval_k: int = 3,
+        retrieval_k: int = 1,  # 3 → 1: 회상 컨텍스트 줄여 페르소나 안정화
     ):
         self.characters = characters or DEFAULT_CHARACTERS
         self.retrieval_k = retrieval_k

@@ -18,6 +18,11 @@ import argparse
 import sys
 from pathlib import Path
 
+# Windows cp949 콘솔에서 em dash 등 한국어 외 문자 print 실패 방지
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import torch
 import yaml
 from peft import PeftModel
@@ -181,12 +186,16 @@ def main():
                         print(f"  baseline=lora 인데 어댑터 미로드, skip")
                         continue
                     model.set_adapter(npc)
+                    # NOTE: lora baseline에 system prompt 추가 시도했으나 -0.17 떨어짐.
+                    # LoRA는 system role 없는 user-assistant 쌍으로 학습되어 system 추가 시
+                    # 분포 외가 됨. 측정 결과 따라 system 없이 평가.
                     response = generate_response(model, tokenizer, prompt)
                 elif baseline == "full":
                     if not adapters_loaded:
                         continue
                     model.set_adapter(npc)
-                    retrieved = retriever.search(prompt, k=3, exclude_sources={"dialogue"})
+                    # k=1: 회상 컨텍스트 줄여 페르소나 안정화 (production engine.py default와 일치)
+                    retrieved = retriever.search(prompt, k=1, exclude_sources={"dialogue"})
                     augmented = build_user_prompt(retrieved, prompt)
                     response = generate_response(model, tokenizer, prompt, augmented=augmented)
 

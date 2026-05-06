@@ -24,6 +24,11 @@ def build_user_prompt(retrieved, user_text):
     - 메모리 source별 자연어 정리 (플레이어 발화 → "전에 듣기로", propagation → 그대로)
     - 최대 3개까지, "; "로 구분
     - "떠올려보니 —" prefix로 회상 분위기
+
+    NOTE (2026-05-03): 학습 데이터 RAG 형식 `(평서문1. 평서문2.) 질문`과 통일
+    시도했으나 mathilda 평가에서 -0.25 떨어져서 revert. EXAONE의 instruction-following이
+    강해서 두 형식 모두 처리 가능, 출처 prefix("X한테 들었다") 자체가 페르소나 응답에
+    유익한 신호로 작용하는 듯.
     """
     if not retrieved:
         return user_text
@@ -49,7 +54,7 @@ class NpcChat:
         npc_name: str,
         adapter_dir: Path,
         chroma_dir: Path,
-        retrieval_k: int = 3,
+        retrieval_k: int = 1,  # 3 → 1: 회상 컨텍스트 줄여 페르소나 안정화
     ):
         self.npc_name = npc_name
         self.retrieval_k = retrieval_k

@@ -52,8 +52,8 @@ def convert_one(character):
     if not src.exists():
         raise FileNotFoundError(f"원본 없음: {src}")
 
-    # 모든 데이터 소스: 원본 + RAG 증강 + 캐주얼 증강 + 멀티턴
-    suffixes = ["", "_rag", "_casual", "_multiturn"]
+    # 모든 데이터 소스: 원본 + RAG 증강 + 캐주얼 증강 + 멀티턴 + 페르소나 마커 보강
+    suffixes = ["", "_rag", "_casual", "_multiturn", "_marker_augment"]
     rows = []
     for suffix in suffixes:
         path = RAW_DIR / f"{character}{suffix}.jsonl"

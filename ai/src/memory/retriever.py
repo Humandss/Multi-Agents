@@ -58,9 +58,15 @@ class MemoryRetriever:
         예: "안녕하세요"는 어떤 메모리와도 충분히 유사하지 않아 빈 리스트 반환 →
         LoRA는 평소 인사 패턴으로 응답.
 
+        짧은 query (8자 미만) — 인사·감탄사·단답류는 회상 자체를 스킵.
+        이런 query는 generic Korean baseline noise로 임계값 통과해도 의미 매칭 약하고,
+        회상 컨텍스트가 단답·무뚝뚝 페르소나(hermann)를 깨뜨리는 부작용 더 큼.
+
         exclude_sources: 특정 소스 (예: 'dialogue') 메모리는 결과에서 제외.
         본인이 한 말을 그대로 회상하는 어색한 루프 방지용.
         """
+        if len(query.strip()) < 8:
+            return []
         results = self.store.query(query, k=pool)
         ids = results["ids"][0]
         if not ids:
