@@ -96,21 +96,40 @@ PROMPT_DIALOGUE = (
 )
 
 
-class _AdapterTransformer:
-    """엔진과 같은 인터페이스를 흉내내는 가벼운 transformer.
+def _make_persona_system(persona_info: dict) -> str:
+    """prompting baseline에서 NPC별 system prompt 생성 (eval_persona와 동일 형식)."""
+    desc = persona_info.get("description", "")
+    markers = persona_info.get("markers", {})
+    speech_start = markers.get("speech_start", [])
+    tone = markers.get("tone", [])
+    vocab = markers.get("vocabulary", [])
+    return (
+        f"당신은 게임 NPC 캐릭터입니다.\n"
+        f"캐릭터 설명: {desc}\n"
+        f"말투 시작 패턴: {', '.join(speech_start)}\n"
+        f"전반적 어조: {', '.join(tone)}\n"
+        f"자주 쓰는 어휘: {', '.join(vocab)}\n"
+        f"이 캐릭터로서 자연스럽게 짧게 답하세요."
+    )
 
-    engine.py의 NpcServer.transform과 동일한 로직 사용 (prompt 분기 + prefix 정리).
+
+class _AdapterTransformer:
+    """LoRA / prompting baseline 둘 다 지원하는 transformer.
+
+    - baseline='lora': set_adapter(npc)로 NPC별 LoRA 사용
+    - baseline='prompting': LoRA 비활성 + system prompt에 페르소나 묘사 (eval_persona와 같은 방식)
     """
-    def __init__(self, model, tokenizer):
+    def __init__(self, model, tokenizer, baseline: str = "lora", personas: dict | None = None):
         self.model = model
         self.tokenizer = tokenizer
+        self.baseline = baseline
+        self.personas = personas or {}
         self.cache = {}
 
     def transform(self, sender_npc: str, memory_text: str, source: str = "observation") -> str:
-        key = (sender_npc, memory_text, source)
+        key = (sender_npc, memory_text, source, self.baseline)
         if key in self.cache:
             return self.cache[key]
-        self.model.set_adapter(sender_npc)
 
         # 메모리 출처 prefix 제거 (더 깨끗한 입력)
         clean = memory_text
@@ -121,20 +140,48 @@ class _AdapterTransformer:
 
         template = PROMPT_DIALOGUE if source == "dialogue" else PROMPT_FACT
         prompt = template.format(memory=clean)
-        messages = [{"role": "user", "content": prompt}]
+
+        # baseline별 messages 구성
+        if self.baseline == "prompting":
+            persona_info = self.personas.get(sender_npc, {})
+            system_text = _make_persona_system(persona_info)
+            messages = [
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": prompt},
+            ]
+            ctx = self.model.disable_adapter() if hasattr(self.model, "disable_adapter") else None
+        else:  # lora
+            self.model.set_adapter(sender_npc)
+            messages = [{"role": "user", "content": prompt}]
+            ctx = None
+
         inputs = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
         ).to(self.model.device)
-        with torch.no_grad():
-            out = self.model.generate(
-                inputs,
-                max_new_tokens=80,
-                do_sample=True,
-                temperature=0.4,
-                top_p=0.9,
-                repetition_penalty=1.15,
-                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-            )
+
+        if ctx is not None:
+            with ctx, torch.no_grad():
+                out = self.model.generate(
+                    inputs,
+                    max_new_tokens=80,
+                    do_sample=True,
+                    temperature=0.4,
+                    top_p=0.9,
+                    repetition_penalty=1.15,
+                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                )
+        else:
+            with torch.no_grad():
+                out = self.model.generate(
+                    inputs,
+                    max_new_tokens=80,
+                    do_sample=True,
+                    temperature=0.4,
+                    top_p=0.9,
+                    repetition_penalty=1.15,
+                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                )
+
         text = self.tokenizer.decode(
             out[0][inputs.shape[1]:], skip_special_tokens=True
         ).strip()
@@ -152,9 +199,11 @@ def main():
     parser.add_argument("--importance", type=int, default=8)
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--baseline", default="lora", choices=["lora", "prompting"],
+                        help="lora: NPC별 LoRA 어댑터 사용. prompting: LoRA 비활성 + system prompt 페르소나.")
     args = parser.parse_args()
 
-    print(f"[eval/prop] inject {args.inject_to}: {args.fact}")
+    print(f"[eval/prop] baseline={args.baseline}, inject {args.inject_to}: {args.fact}")
     print(f"           {args.days}일 시뮬, seed={args.seed}\n")
 
     # 1. 시드 + 주입
@@ -180,7 +229,17 @@ def main():
         model.load_adapter(str(ADAPTERS_DIR / npc), adapter_name=npc)
     model.eval()
 
-    transformer = _AdapterTransformer(model, tokenizer)
+    # baseline=prompting이면 페르소나 정의 로드
+    personas = {}
+    if args.baseline == "prompting":
+        personas_path = ROOT / "data" / "eval" / "test_prompts.yaml"
+        with personas_path.open(encoding="utf-8") as f:
+            personas = _yaml.safe_load(f).get("personas", {})
+        print(f"[eval/prop] 페르소나 정의 로드 ({len(personas)}종, prompting baseline용)")
+
+    transformer = _AdapterTransformer(
+        model, tokenizer, baseline=args.baseline, personas=personas
+    )
 
     # 3. 시뮬
     graph = RelationGraph.load(RELATIONS_PATH)
@@ -229,8 +288,8 @@ def main():
         for sender, lst in sorted(per_sender.items()):
             print(f"    {sender:>10}: {sum(lst)/len(lst):.3f} (n={len(lst)})")
 
-    # 결과 저장
-    out_path = RESULTS_DIR / "propagation_eval.json"
+    # 결과 저장 (baseline별로 다른 파일)
+    out_path = RESULTS_DIR / f"propagation_eval_{args.baseline}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump({

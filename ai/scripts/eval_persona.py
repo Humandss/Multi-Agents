@@ -55,6 +55,7 @@ def load_eval_prompts():
 
 
 def make_persona_system(persona_info: dict) -> str:
+    """prompting baseline용 verbose system prompt — 페르소나 묘사 전체 포함."""
     desc = persona_info.get("description", "")
     markers = persona_info.get("markers", {})
     speech_start = markers.get("speech_start", [])
@@ -68,6 +69,18 @@ def make_persona_system(persona_info: dict) -> str:
         f"자주 쓰는 어휘: {', '.join(vocab)}\n"
         f"이 캐릭터로서 자연스럽게 짧게 답하세요."
     )
+
+
+def make_light_system(npc: str, persona_info: dict) -> str:
+    """LoRA + light system prompt 결합용 — 학습 분포 안 깨고 reinforce.
+
+    이전 verbose system prompt 추가 시 LoRA -0.17 떨어짐 (학습 분포 외).
+    Light 버전은 NPC 이름 + 1개 마커 hint만 — minimal nudge.
+    """
+    markers = persona_info.get("markers", {})
+    speech_start = markers.get("speech_start", [])
+    hint = f'"{speech_start[0]}"' if speech_start else "캐릭터답게"
+    return f"당신은 {npc}입니다. {hint} 같은 말투로 짧고 자연스럽게 답하세요."
 
 
 def generate_response(
@@ -186,10 +199,12 @@ def main():
                         print(f"  baseline=lora 인데 어댑터 미로드, skip")
                         continue
                     model.set_adapter(npc)
-                    # NOTE: lora baseline에 system prompt 추가 시도했으나 -0.17 떨어짐.
-                    # LoRA는 system role 없는 user-assistant 쌍으로 학습되어 system 추가 시
-                    # 분포 외가 됨. 측정 결과 따라 system 없이 평가.
-                    response = generate_response(model, tokenizer, prompt)
+                    # Light system prompt 추가 — 학습 분포 안 깨면서 마커 reinforce.
+                    # verbose는 -0.17 떨어졌지만 light(1줄)는 효과 다를 가능성.
+                    light_sys = make_light_system(npc, persona_info)
+                    response = generate_response(
+                        model, tokenizer, prompt, system=light_sys
+                    )
                 elif baseline == "full":
                     if not adapters_loaded:
                         continue
@@ -197,7 +212,11 @@ def main():
                     # k=1: 회상 컨텍스트 줄여 페르소나 안정화 (production engine.py default와 일치)
                     retrieved = retriever.search(prompt, k=1, exclude_sources={"dialogue"})
                     augmented = build_user_prompt(retrieved, prompt)
-                    response = generate_response(model, tokenizer, prompt, augmented=augmented)
+                    light_sys = make_light_system(npc, persona_info)
+                    response = generate_response(
+                        model, tokenizer, prompt,
+                        system=light_sys, augmented=augmented,
+                    )
 
                 # judge
                 result = judge.score(npc, prompt, response, persona_info)

@@ -1,0 +1,39 @@
+# 멀티턴 페르소나 drift 평가용 시나리오.
+# 모든 NPC가 같은 player turn 시퀀스를 받음 → 응답은 NPC별 다름.
+# 턴별 페르소나 점수 측정으로 drift 정량화.
+
+# Scenario 1: 정보 탐문 (greeting → info → followup)
+scenario_info:
+  description: "플레이어가 마을에 와서 정보 수집"
+  turns:
+    - "안녕하세요"
+    - "이 마을 처음 와봐요"
+    - "최근 무슨 일 있었어요?"
+    - "용 사냥꾼 얘기 들었어요?"
+    - "더 자세히 알려주세요"
+    - "왜 그렇게 됐죠?"
+    - "정말 신기하네요"
+
+# Scenario 2: 감정 + 친밀 (greeting → smalltalk → emotional)
+scenario_emotional:
+  description: "플레이어가 NPC와 친밀하게 대화"
+  turns:
+    - "안녕!"
+    - "여기 분위기 좋네요"
+    - "오늘 기분 어떠세요?"
+    - "왠지 외로워 보여요"
+    - "혹시 친한 분 있어요?"
+    - "고마워요, 도움 됐어요"
+    - "또 올게요!"
+
+# Scenario 3: 거래 + 후속 (trade-related multi-turn)
+scenario_trade:
+  description: "플레이어가 거래 관련 질문 후 follow-up"
+  turns:
+    - "안녕하세요"
+    - "뭐 좀 사고 싶어요"
+    - "추천해주실 만한 게 있어요?"
+    - "그게 얼마예요?"
+    - "조금 비싸네요..."
+    - "다른 건 어때요?"
+    - "고민 좀 해볼게요"
