@@ -3,6 +3,7 @@
 엔드포인트:
   GET  /healthz           서버 상태 + 로딩된 NPC 목록
   GET  /npcs              NPC별 메모리 수
+  POST /compare           같은 텍스트를 5종 NPC에 보내고 응답 모음 (페르소나 비교 demo)
   WS   /ws/{npc_name}     NPC와 대화 + 시간 진행 명령
 
 WebSocket 프로토콜:
@@ -24,8 +25,13 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from .engine import NpcServer
+
+
+class CompareRequest(BaseModel):
+    text: str
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTERS_DIR = ROOT / "output" / "adapters"
@@ -52,6 +58,36 @@ def create_app() -> FastAPI:
             }
             for npc in engine.characters
         })
+
+    @app.post("/compare")
+    def compare_npcs(req: CompareRequest):
+        """같은 텍스트를 5종 NPC에 보내고 각자 응답을 모아서 반환.
+
+        페르소나 비교 demo용. 발표 시 "같은 사실, 5종 NPC가 어떻게 다르게 표현하는가" 시연.
+        history는 사용 안 함 (각 NPC 독립 single-turn 응답).
+        """
+        text = req.text.strip()
+        if not text:
+            return JSONResponse({"error": "empty text"}, status_code=400)
+
+        responses = []
+        for npc in engine.characters:
+            try:
+                result = engine.respond(npc, text, history=None)
+                responses.append({
+                    "npc": npc,
+                    "text": result["text"],
+                    "latency_ms": result["latency_ms"],
+                    "memories_used": result.get("memories_used", []),
+                })
+            except Exception as e:
+                responses.append({
+                    "npc": npc,
+                    "text": "",
+                    "error": str(e),
+                })
+
+        return JSONResponse({"input": text, "responses": responses})
 
     # 한 세션 = 한 대화. 직전 6쌍(=12 메시지) 유지해서 멀티턴 흐름 살림.
     HISTORY_TURNS = 6

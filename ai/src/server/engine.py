@@ -5,10 +5,104 @@
 또한 NPC 간 정보 전파(시간 기반)도 동일 프로세스에서 수행한다.
 """
 
+import re
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+# 응답에서 강제 제거할 emoji/특수문자 — system prompt instruction이 무시되는 경우 후처리.
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F300-\U0001F9FF"      # 일반 이모지/픽토그램
+    "\U0001FA00-\U0001FAFF"
+    "\U00002600-\U000027BF"      # ♪✨ 등 dingbats + misc symbols
+    "\U0001F1E0-\U0001F1FF"      # 국기
+    "\U0001F600-\U0001F64F"      # 이모티콘
+    "\U0001F680-\U0001F6FF"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+_BRACKET_NOISE = re.compile(r"\[[^\[\]]{1,15}\]")  # [이옵니다], [^-^], [리 등 짧은 대괄호 표기
+
+# 영문 NPC 이름 → 한글 표기 (system prompt에서 영문 이름 사용해서 응답에 leak되는 문제 해결)
+_NAME_NORMALIZE = [
+    (re.compile(r"\b[Hh]err?mann\b"), "헤르만"),
+    (re.compile(r"\b[Mm]athilda\b"), "마틸다"),
+    (re.compile(r"\b[Bb]ernhardt\b"), "베른하르트"),
+    (re.compile(r"\b[Ee]lias\b"), "엘리아스"),
+    (re.compile(r"\b[Ff]inn\b"), "핀"),
+    # 한글 변형도 통일 (베르나르드 등)
+    (re.compile(r"베르나르드"), "베른하르트"),
+    (re.compile(r"마트닐라|마트일다"), "마틸다"),
+]
+
+# 이중 조사/어미 정리 (모델이 system prompt 어미 명령 따라가다가 본래 어미와 충돌)
+_PARTICLE_FIX = [
+    # 이중 조사: 첫 번째만 남김 (예: 헤르만이가 → 헤르만이)
+    (re.compile(r"(이|는|은|을|를|과|와)(가|은|를|을|와|과)\b"),
+     lambda m: m.group(1)),
+    # 이중 어미: ~ㅂ니다 + 추가 어미 (예: 권장드립니다지만 → 권장드립니다)
+    (re.compile(r"(습니다|입니다|옵니다|됩니다|십니다)(요|오|지만|게요|이오|으나)"),
+     lambda m: m.group(1)),
+    # 어미 변형: ~리이다 → ~리다 (finn 어미 변형)
+    (re.compile(r"리리이다"), "리이다"),
+    (re.compile(r"리이다이다"), "리이다"),
+    # 단순 중복: 요요/오오 → 요/오
+    (re.compile(r"요요(?=[\s.,!?]|$)"), "요"),
+    (re.compile(r"오오(?=[\s.,!?]|$)"), "오"),
+    # 조사 + 으나 (어색한 결합)
+    (re.compile(r"(다|요)으나"), lambda m: m.group(1) + "나"),
+]
+
+
+_SENT_ENDS = (".", "?", "!", "。", "?", "!", "~")
+
+
+def _cut_to_last_sentence(text: str) -> str:
+    """마지막 완전한 문장 종결까지만 유지. max_new_tokens 한계로 잘린 끝 부분 제거.
+
+    예: "어서 오시지요. 무엇을 찾으십..." → "어서 오시지요."
+    예: "권장드립니다지만, 일반적으로 검류는 헤르만에게 문의하시길 권하노" → "권장드립니다지만, 일반적으로 검류는 헤르만에게 문의하시길"
+        (이 경우 마침표 없으면 그대로 — 추가 처리 필요할 수 있음)
+    """
+    text = text.rstrip()
+    if not text:
+        return text
+    # 이미 종결 부호로 끝나면 OK
+    if text[-1] in _SENT_ENDS:
+        return text
+    # 마지막 종결 부호 위치 찾기
+    last_end = max(text.rfind(c) for c in _SENT_ENDS)
+    if last_end >= 0:
+        # 종결 후 자투리 있으면 잘림 — 종결까지만 유지
+        # 단 종결 직후 한 글자 정도면 무시 (자연스러운 응답 형태일 수도)
+        tail = text[last_end + 1:].strip()
+        if len(tail) >= 2:  # 2자 이상 미완성 꼬리만 자름
+            return text[:last_end + 1]
+    return text
+
+
+def _clean_response(text: str) -> str:
+    """LLM 응답에서 emoji/특수문자/대괄호 표기 제거 + NPC 이름 한글 정규화 + 미완성 끝 cut.
+
+    system prompt의 형식 안내 + 영문 NPC 이름이 응답에 leak되는 부작용 정리.
+    """
+    text = _EMOJI_PATTERN.sub("", text)
+    text = _BRACKET_NOISE.sub("", text)
+    # 닫히지 않은 [ 시작 — 응답 끝에서 cut됨
+    text = re.sub(r"\[[^\[\]]{0,15}$", "", text)
+    # NPC 이름 한글 정규화
+    for pattern, replacement in _NAME_NORMALIZE:
+        text = pattern.sub(replacement, text)
+    # 이중 조사/어미 정리
+    for pattern, replacement in _PARTICLE_FIX:
+        text = pattern.sub(replacement, text)
+    # 미완성 끝 문장 자르기
+    text = _cut_to_last_sentence(text)
+    return text.strip()
 
 import torch
 import yaml
@@ -25,16 +119,53 @@ BASE_REVISION = "496aef060b296b34c6b0035149f5af9e2b8c168c"
 
 DEFAULT_CHARACTERS = ["elias", "hermann", "mathilda", "finn", "bernhardt"]
 
+# NPC별 강한 instruction — EXAONE의 정중한 baseline 깨고 페르소나 강제
+# 형식 단순화: 모델이 어미 표시 대괄호를 응답에 포함시키는 부작용 회피.
+# 직업 명시 추가: NPC가 다른 NPC 영역 침범하는 것 방지 (mathilda가 검 추천 등).
+NPC_STRICT_RULES = {
+    "elias": (
+        "직업: 마법사·학자. 마법·학문·검증 관련 질문에 답하시오.\n"
+        "정중한 옛말체. 어미는 ~이오 ~소 ~오 ~다오 형태. "
+        "회의적·차가운 학자 어조. 한두 문장으로 짧게.\n"
+        "예: 안녕하세요 -> 흠. 무슨 일이오?"
+    ),
+    "hermann": (
+        "직업: 대장장이. 검·쇠·도구 거래만 취급. 약초·음식은 다른 NPC에게 보내시오.\n"
+        "반말로만 답하시오. 존댓말 절대 금지. 한 문장 단답. "
+        "어. 음. ... 같은 표현으로 시작. 어미는 다 해 지 형태.\n"
+        "예: 안녕하세요 -> 어. 무슨 일."
+    ),
+    "mathilda": (
+        "직업: 술집 주인. 음식·음료·소문 위주. 무기·약초는 절대 팔지 않음 "
+        "(검·도구는 헤르만에게, 약초는 베른하르트에게 보내시오).\n"
+        "따뜻하고 사교적. 어머나 어머 아유 같은 표현 자주. "
+        "어미는 어요 답니다 죠 형태. 한두 문장으로 짧게.\n"
+        "예: 안녕하세요 -> 어머나 어서 오세요!"
+    ),
+    "finn": (
+        "직업: 음유시인. 노래·이야기·전설 위주. 거래·도구는 다른 NPC에게 보내시오.\n"
+        "시적이고 과장된 어조. 오 그대 같은 표현 자주. "
+        "어미는 이옵니다 이지요 사옵니다 리라 형태 자주. 한두 문장.\n"
+        "예: 안녕하세요 -> 오 그대여 별빛 같은 발걸음이옵니다."
+    ),
+    "bernhardt": (
+        "직업: 잡화점 상인. 약초·잡화 위주. 검·무기는 헤르만에게 보내시오.\n"
+        "정중하지만 거래 실용 중심. 흠 어서 같은 표현 시작. "
+        "어미는 지요 이올시다 습니다 형태. 한두 문장.\n"
+        "예: 안녕하세요 -> 어서 오시지요. 무엇을 찾으십니까?"
+    ),
+}
+
 # NPC별 generation 파라미터 차별화
 # - hermann/elias: 짧고 무뚝뚝/회의적 → 낮은 temp + 짧은 max_tokens
 # - mathilda/finn: 수다스럽고 시적 → 약간 높은 temp + 긴 max_tokens
 # - bernhardt: 정중한 거래상 → 중간
 GEN_PARAMS = {
-    "hermann":   {"temperature": 0.35, "max_new_tokens": 100, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
-    "elias":     {"temperature": 0.35, "max_new_tokens": 130, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
-    "mathilda":  {"temperature": 0.50, "max_new_tokens": 160, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4},
-    "finn":      {"temperature": 0.45, "max_new_tokens": 160, "repetition_penalty": 1.18, "no_repeat_ngram_size": 3},
-    "bernhardt": {"temperature": 0.40, "max_new_tokens": 130, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4},
+    "hermann":   {"temperature": 0.35, "max_new_tokens": 70,  "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
+    "elias":     {"temperature": 0.35, "max_new_tokens": 80,  "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
+    "mathilda":  {"temperature": 0.50, "max_new_tokens": 100, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4},
+    "finn":      {"temperature": 0.45, "max_new_tokens": 90,  "repetition_penalty": 1.18, "no_repeat_ngram_size": 3},
+    "bernhardt": {"temperature": 0.40, "max_new_tokens": 90,  "repetition_penalty": 1.18, "no_repeat_ngram_size": 4},
 }
 
 PROMPT_FACT = (
@@ -64,10 +195,12 @@ class NpcServer:
         characters: list[str] | None = None,
         retrieval_k: int = 1,  # 3 → 1: 회상 컨텍스트 줄여 페르소나 안정화
         use_lora: bool = False,  # LoRA 폐기 결정 후 default False. ablation용으로 True 가능.
+        use_memory: bool = False,  # 회상 비활성 default. 단계적 접근: 페르소나만 → 메모리 → 전파.
     ):
         self.characters = characters or DEFAULT_CHARACTERS
         self.retrieval_k = retrieval_k
         self.use_lora = use_lora
+        self.use_memory = use_memory
 
         # use_lora=True일 때만 어댑터 검증
         if use_lora:
@@ -145,11 +278,13 @@ class NpcServer:
             print(f"[engine] 페르소나 정의 로드 실패: {e}")
 
     def _build_system_prompt(self, npc: str) -> str:
-        """NPC별 system prompt — 페르소나 마커(말투/금기) + 다른 NPC 직업명 + 회상 활용 안내.
+        """NPC별 system prompt — 페르소나 마커 + 어휘 + 다른 NPC 직업.
 
-        주의: 시스템 프롬프트가 너무 길거나 LoRA 학습 분포에서 멀어지면 출력이 깨짐
-        (영어 code-switch, 채팅 템플릿 토큰 leak, 박스 문자 spam 발생함).
-        한 번 회귀 겪고 나서 보수적으로 줄임 — 마커는 간결하게, 다른 NPC는 직업명만.
+        use_memory=True일 때만 회상 활용 안내 추가.
+
+        설계 노트:
+        - 너무 길면 출력 깨짐 (영어 leak, 템플릿 토큰 leak 회귀 발생함). 보수적으로 유지.
+        - vocabulary 추가 — 페르소나 어휘 reinforce.
         """
         p = self.personas.get(npc, {})
         desc = p.get("description", "")
@@ -158,6 +293,7 @@ class NpcServer:
         avoid = ", ".join(m.get("avoid", []))
         starts = ", ".join(m.get("speech_start", []))
         ends = ", ".join(m.get("speech_end", []))
+        vocab = ", ".join(m.get("vocabulary", []))
 
         # 다른 NPC 직업명만 (description 첫 마디만 추출)
         role_brief = {
@@ -166,15 +302,22 @@ class NpcServer:
         }
         others = ", ".join(f"{n}={role_brief[n]}" for n in role_brief if role_brief[n])
 
+        memory_hint = (
+            "사용자 메시지 앞 괄호 안에 떠올린 정보가 있다면 자연스럽게 답에 녹이세요. "
+            if self.use_memory else ""
+        )
+
+        strict_rule = NPC_STRICT_RULES.get(npc, "")
+
         return (
             f"당신은 {npc}입니다. {desc}\n"
-            f"어조: {tone}.\n"
-            f"피해야 할 것: {avoid}.\n"
-            f"말투 마커: 시작={starts} | 어미={ends}.\n"
-            f"다른 마을 사람: {others}. 이들의 직업을 바꾸지 마세요.\n"
-            "사용자 메시지 앞 괄호 안에 당신이 떠올린 정보가 있다면, 그 정보를 자연스럽게 답에 녹이세요. "
-            "한국어로만 답하시오. 영어 단어, 외국어 표현 절대 금지. "
-            "캐릭터답게 짧고 자연스럽게."
+            f"어조: {tone}. 피해야 할 것: {avoid}.\n"
+            f"자주 쓰는 어휘: {vocab}.\n"
+            f"{strict_rule}\n"
+            f"다른 마을 사람: {others}. 이들의 이름과 직업을 절대 바꾸지 마시오 "
+            "(예: mathilda를 마트닐라로 변형 금지).\n"
+            f"{memory_hint}"
+            "한국어로만 답하시오. 영어/외국어/이모지/특수문자(♪✨ 등) 절대 금지."
         )
 
     # ---------- 응답 생성 ----------
@@ -189,12 +332,16 @@ class NpcServer:
             raise ValueError(f"알 수 없는 NPC: {npc}")
 
         t0 = time.time()
-        # 같은 NPC와 대화 중에는 자기가 들은 플레이어 발화(DIALOGUE)를 회상하지 않음.
-        # (전파를 거쳐 다른 NPC가 PROPAGATION으로 다시 받게 되면 그건 회상 가능)
-        retrieved = self.retrievers[npc].search(
-            user_text, k=self.retrieval_k, exclude_sources={"dialogue"}
-        )
-        augmented = build_user_prompt(retrieved, user_text)
+        if self.use_memory:
+            # 같은 NPC와 대화 중에는 자기가 들은 플레이어 발화(DIALOGUE)를 회상하지 않음.
+            # (전파를 거쳐 다른 NPC가 PROPAGATION으로 다시 받게 되면 그건 회상 가능)
+            retrieved = self.retrievers[npc].search(
+                user_text, k=self.retrieval_k, exclude_sources={"dialogue"}
+            )
+            augmented = build_user_prompt(retrieved, user_text)
+        else:
+            retrieved = []
+            augmented = user_text
 
         # NPC별 system prompt 주입 (history 없을 때만, 있으면 첫 system 유지)
         messages = list(history or [])
@@ -230,10 +377,12 @@ class NpcServer:
         text = self.tokenizer.decode(
             out[0][inputs.shape[1]:], skip_special_tokens=True
         ).strip()
+        text = _clean_response(text)  # emoji/특수문자 제거
         latency_ms = int((time.time() - t0) * 1000)
 
         # 플레이어 발화를 NPC의 DIALOGUE 메모리로 저장 (다음 tick에서 전파 후보)
-        self._save_player_turn(npc, user_text)
+        if self.use_memory:
+            self._save_player_turn(npc, user_text)
 
         return {
             "npc": npc,
@@ -335,6 +484,7 @@ class NpcServer:
             out[0][inputs.shape[1]:], skip_special_tokens=True
         ).strip()
         text = text.split("\n")[0].strip().strip('"').strip("'")
+        text = _clean_response(text)  # emoji/특수문자 제거
         if not text:
             text = clean  # fallback: 원문 그대로
         self._transform_cache[cache_key] = text
