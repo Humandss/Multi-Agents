@@ -1,4 +1,10 @@
-"""LoRA 어댑터 + 메모리 검색 기반 NPC 응답 생성."""
+"""LoRA 어댑터 + 메모리 검색 기반 NPC 응답 생성.
+
+⚠️  DEPRECATED (2026-05-03): 측정 결과 LoRA가 prompting baseline에 짐.
+    Production 서버는 src/server/engine.py의 NpcServer(use_lora=False) 사용.
+    이 NpcChat 클래스는 LoRA 활성 standalone 추론 (test_inference.py 등) 시만 사용.
+    `build_user_prompt` 함수는 NpcServer에서도 사용 — 폐기 X.
+"""
 
 from pathlib import Path
 

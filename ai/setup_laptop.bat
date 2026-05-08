@@ -3,11 +3,16 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ============================================
-echo   AI 서버 노트북 셋업 (총 약 40분)
+echo   AI 서버 노트북 셋업 (LLM-only, 약 15-20분)
 echo ============================================
 echo.
+echo LoRA 학습은 폐기됨 (eval에서 prompting baseline 우위 확인).
+echo 본 셋업은 추론 서버용 — uv sync + HF 로그인 + 시드 메모리.
+echo.
+echo LoRA 재학습이 필요하면 setup_laptop_with_lora.bat 사용.
+echo.
 
-echo [1/5] uv sync — Python 의존성 설치 (10-15분)
+echo [1/3] uv sync — Python 의존성 설치 (10-15분)
 python -m uv sync
 if errorlevel 1 (
     echo uv sync 실패. uv가 설치되어 있나요?  pip install uv
@@ -16,24 +21,15 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/5] HF 토큰 확인 — 처음이면 토큰 입력 필요
-python -m uv run hf auth whoami >nul 2>nul
+echo [2/3] HF 토큰 확인 — 처음이면 토큰 입력 필요
+python -m uv run huggingface-cli whoami >nul 2>nul
 if errorlevel 1 (
     echo HF 로그인 필요. 토큰을 입력하세요.
-    python -m uv run hf auth login
+    python -m uv run huggingface-cli login
 )
 
 echo.
-echo [3/5] 데이터 전처리
-python -m uv run python scripts/preprocess.py
-python -m uv run python scripts/build_multiturn_data.py
-
-echo.
-echo [4/5] 5종 LoRA 학습 (~10분, 베이스 모델 다운로드 포함 시 ~25분)
-python -m uv run python scripts/train_lora.py --char all --epochs 3
-
-echo.
-echo [5/5] 시드 메모리 적재
+echo [3/3] 시드 메모리 적재 (BGE-M3 다운로드 포함, 첫 실행 시 ~2분)
 python -m uv run python scripts/seed_memory.py
 
 echo.

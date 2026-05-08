@@ -63,14 +63,18 @@ class NpcServer:
         relations_path: Path | None = None,
         characters: list[str] | None = None,
         retrieval_k: int = 1,  # 3 → 1: 회상 컨텍스트 줄여 페르소나 안정화
+        use_lora: bool = False,  # LoRA 폐기 결정 후 default False. ablation용으로 True 가능.
     ):
         self.characters = characters or DEFAULT_CHARACTERS
         self.retrieval_k = retrieval_k
+        self.use_lora = use_lora
 
-        adapter_paths = {npc: adapters_dir / npc for npc in self.characters}
-        for npc, p in adapter_paths.items():
-            if not p.exists():
-                raise FileNotFoundError(f"어댑터 없음: {p}")
+        # use_lora=True일 때만 어댑터 검증
+        if use_lora:
+            adapter_paths = {npc: adapters_dir / npc for npc in self.characters}
+            for npc, p in adapter_paths.items():
+                if not p.exists():
+                    raise FileNotFoundError(f"어댑터 없음: {p}")
 
         bnb = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -95,13 +99,17 @@ class NpcServer:
             torch_dtype=torch.bfloat16,
         )
 
-        first = self.characters[0]
-        print(f"[engine] LoRA 로딩 ({len(self.characters)}종)...")
-        self.model = PeftModel.from_pretrained(
-            base, str(adapter_paths[first]), adapter_name=first
-        )
-        for npc in self.characters[1:]:
-            self.model.load_adapter(str(adapter_paths[npc]), adapter_name=npc)
+        if use_lora:
+            first = self.characters[0]
+            print(f"[engine] LoRA 로딩 ({len(self.characters)}종)...")
+            self.model = PeftModel.from_pretrained(
+                base, str(adapter_paths[first]), adapter_name=first
+            )
+            for npc in self.characters[1:]:
+                self.model.load_adapter(str(adapter_paths[npc]), adapter_name=npc)
+        else:
+            print("[engine] LoRA 비활성: 베이스 EXAONE + system prompt만 사용")
+            self.model = base
         self.model.eval()
 
         print("[engine] 메모리 store/retriever 초기화...")
@@ -201,7 +209,8 @@ class NpcServer:
             "repetition_penalty": 1.15, "no_repeat_ngram_size": 4,
         })
 
-        self.model.set_adapter(npc)
+        if self.use_lora:
+            self.model.set_adapter(npc)
         inputs = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
         ).to(self.model.device)
@@ -291,7 +300,8 @@ class NpcServer:
         if cache_key in self._transform_cache:
             return self._transform_cache[cache_key]
 
-        self.model.set_adapter(sender_npc)
+        if self.use_lora:
+            self.model.set_adapter(sender_npc)
         # 메모리 prefix 제거: 더 깨끗한 입력으로
         clean = memory_text
         if clean.startswith("플레이어가 말했다: "):
@@ -301,7 +311,12 @@ class NpcServer:
 
         template = PROMPT_DIALOGUE if source == "dialogue" else PROMPT_FACT
         prompt = template.format(memory=clean)
-        messages = [{"role": "user", "content": prompt}]
+        # use_lora=False: 페르소나 변형이 LoRA 없이 system prompt에만 의존하므로 추가
+        # use_lora=True: LoRA가 페르소나 가중치 가지고 있어 system 없이도 작동 (기존)
+        messages = []
+        if not self.use_lora:
+            messages.append({"role": "system", "content": self._build_system_prompt(sender_npc)})
+        messages.append({"role": "user", "content": prompt})
         inputs = self.tokenizer.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
         ).to(self.model.device)
