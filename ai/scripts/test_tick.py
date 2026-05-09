@@ -3,6 +3,11 @@
 import argparse
 import asyncio
 import json
+import sys
+
+# Windows cp949 콘솔에서 em dash 등 한국어 외 문자 print 실패 방지
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import websockets
 
@@ -10,7 +15,8 @@ import websockets
 async def run(host, port):
     # mathilda에 새 정보 주입 → 시간 진행 → elias가 알게 됐는지 확인
     uri_mat = f"ws://{host}:{port}/ws/mathilda"
-    async with websockets.connect(uri_mat) as ws:
+    # tick이 1-2분 걸려서 ping timeout 늘림
+    async with websockets.connect(uri_mat, ping_interval=600, ping_timeout=600) as ws:
         await ws.recv()  # ready
 
         print("[1] mathilda에게 새 사건 알림 (플레이어 발화 → DIALOGUE 메모리)")
@@ -21,7 +27,7 @@ async def run(host, port):
         resp = json.loads(await ws.recv())
         print(f"   mathilda: {resp['text']}\n")
 
-        print("[2] time_advance — 하루 진행")
+        print("[2] time_advance — 하루 진행 (1-2분 소요)")
         await ws.send(json.dumps({"type": "time_advance"}))
         tick = json.loads(await ws.recv())
         print(f"   day={tick['day']}, 전달 {len(tick['events'])}개")
@@ -35,7 +41,7 @@ async def run(host, port):
     # 다른 NPC (elias)가 그 정보를 회상하는지 확인
     print("[3] elias에게 곰 얘기 물어보기")
     uri_eli = f"ws://{host}:{port}/ws/elias"
-    async with websockets.connect(uri_eli) as ws:
+    async with websockets.connect(uri_eli, ping_interval=600, ping_timeout=600) as ws:
         await ws.recv()  # ready
         await ws.send(json.dumps({"type": "chat", "text": "마을에 곰 나타났다는 소문 들으셨어요?"}))
         resp = json.loads(await ws.recv())

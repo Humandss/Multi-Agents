@@ -5,6 +5,7 @@
 또한 NPC 간 정보 전파(시간 기반)도 동일 프로세스에서 수행한다.
 """
 
+import json
 import re
 import time
 import uuid
@@ -34,9 +35,14 @@ _NAME_NORMALIZE = [
     (re.compile(r"\b[Bb]ernhardt\b"), "베른하르트"),
     (re.compile(r"\b[Ee]lias\b"), "엘리아스"),
     (re.compile(r"\b[Ff]inn\b"), "핀"),
-    # 한글 변형도 통일 (베르나르드 등)
-    (re.compile(r"베르나르드"), "베른하르트"),
-    (re.compile(r"마트닐라|마트일다"), "마틸다"),
+    # 한글 변형도 통일
+    (re.compile(r"베르나르드|베르나르트"), "베른하르트"),
+    (re.compile(r"마트닐라|마트일다|수학틸라|수학틸다"), "마틸다"),
+    (re.compile(r"헤르몬|헤른|헤르몽"), "헤르만"),
+    (re.compile(r"엘리어스|엘시아스|엘리아斯"), "엘리아스"),
+    # 일본어/외국어 조사 leak ("금단の책" 같은)
+    (re.compile(r"の"), "의"),
+    (re.compile(r"[぀-ゟ゠-ヿ]+"), ""),  # 히라가나/카타카나 제거
 ]
 
 # 이중 조사/어미 정리 (모델이 system prompt 어미 명령 따라가다가 본래 어미와 충돌)
@@ -44,9 +50,18 @@ _PARTICLE_FIX = [
     # 이중 조사: 첫 번째만 남김 (예: 헤르만이가 → 헤르만이)
     (re.compile(r"(이|는|은|을|를|과|와)(가|은|를|을|와|과)\b"),
      lambda m: m.group(1)),
-    # 이중 어미: ~ㅂ니다 + 추가 어미 (예: 권장드립니다지만 → 권장드립니다)
+    # 일반 ~니다/니까 + 추가 어미 (바랍니다오, 사료됩니다오, 권장드립니다지만 등)
+    (re.compile(r"(니다|니까)(요|오|지만|게요|이오|으나)"),
+     lambda m: m.group(1)),
+    # 이중 어미: ~ㅂ니다 + 추가 어미 (구체적 패턴 — 위 일반 패턴 보조)
     (re.compile(r"(습니다|입니다|옵니다|됩니다|십니다)(요|오|지만|게요|이오|으나)"),
      lambda m: m.group(1)),
+    # elias 어미 시도 실패 패턴 (계시리오까요, 무엇이오까 등)
+    (re.compile(r"(리오|이오|시오)까요?"), lambda m: m.group(1)),
+    # finn 이중 어미 (게요이지요, 게요사옵니다 등)
+    (re.compile(r"게요(이지요|이옵니다|사옵니다|리라)"), lambda m: m.group(1)),
+    # ~까요 + 추가 어미
+    (re.compile(r"까요(요|오)"), "까요"),
     # 어미 변형: ~리이다 → ~리다 (finn 어미 변형)
     (re.compile(r"리리이다"), "리이다"),
     (re.compile(r"리이다이다"), "리이다"),
@@ -121,37 +136,50 @@ DEFAULT_CHARACTERS = ["elias", "hermann", "mathilda", "finn", "bernhardt"]
 
 # NPC별 강한 instruction — EXAONE의 정중한 baseline 깨고 페르소나 강제
 # 형식 단순화: 모델이 어미 표시 대괄호를 응답에 포함시키는 부작용 회피.
-# 직업 명시 추가: NPC가 다른 NPC 영역 침범하는 것 방지 (mathilda가 검 추천 등).
+# 직업 명시: NPC가 다른 NPC 영역 침범하는 것 방지.
+# Quest hook: 회상 정보가 흥미로운 사건이면 페르소나에 맞게 흘림 (플레이어가 단서 놓치지 않도록).
 NPC_STRICT_RULES = {
     "elias": (
         "직업: 마법사·학자. 마법·학문·검증 관련 질문에 답하시오.\n"
-        "정중한 옛말체. 어미는 ~이오 ~소 ~오 ~다오 형태. "
-        "회의적·차가운 학자 어조. 한두 문장으로 짧게.\n"
-        "예: 안녕하세요 -> 흠. 무슨 일이오?"
+        "사극 풍 양반의 정중한 말투. 어미는 반드시 ~이오 ~소 ~오 형태만 사용. "
+        "현대 격식체 ~니다/~습니다/~합니다/~까 어미 절대 금지.\n"
+        "회의적·차가운 학자 어조. 한두 문장으로 짧게 답하시오.\n"
+        "회상 정보가 사건/의문이면 혼잣말처럼 흘리시오 "
+        "(예: '흠... 그 일이 자꾸 마음에 걸리오...').\n"
+        "예: 안녕하세요 -> 흠. 무슨 일이오?\n"
+        "예: 마법 어디서 배웠어요 -> 흠. 옛 도시에서 50년 전이오."
     ),
     "hermann": (
         "직업: 대장장이. 검·쇠·도구 거래만 취급. 약초·음식은 다른 NPC에게 보내시오.\n"
-        "반말로만 답하시오. 존댓말 절대 금지. 한 문장 단답. "
+        "반말로만 답하시오. 존댓말 절대 금지. 한두 문장 단답. "
         "어. 음. ... 같은 표현으로 시작. 어미는 다 해 지 형태.\n"
+        "회상 정보가 사건이면 플레이어를 모험가로 부르며 짧게 호출 "
+        "(예: '너 모험가지? 그 검 가지고 간 사람 봤냐?').\n"
         "예: 안녕하세요 -> 어. 무슨 일."
     ),
     "mathilda": (
         "직업: 술집 주인. 음식·음료·소문 위주. 무기·약초는 절대 팔지 않음 "
         "(검·도구는 헤르만에게, 약초는 베른하르트에게 보내시오).\n"
         "따뜻하고 사교적. 어머나 어머 아유 같은 표현 자주. "
-        "어미는 어요 답니다 죠 형태. 한두 문장으로 짧게.\n"
+        "어미는 어요 답니다 죠 형태. 한두 문장.\n"
+        "회상 정보가 사건이면 플레이어를 적극 부르며 정보 공유 "
+        "(예: '어머! 거기 모험가 분, 마침 잘 왔어요. 그 사건 들었어요?').\n"
         "예: 안녕하세요 -> 어머나 어서 오세요!"
     ),
     "finn": (
         "직업: 음유시인. 노래·이야기·전설 위주. 거래·도구는 다른 NPC에게 보내시오.\n"
         "시적이고 과장된 어조. 오 그대 같은 표현 자주. "
         "어미는 이옵니다 이지요 사옵니다 리라 형태 자주. 한두 문장.\n"
+        "회상 정보가 사건이면 시적으로 흘리며 모험 권유 "
+        "(예: '오 그대여, 영웅이 떠난 지 닷새... 그 운명을 따라가지 않겠나이까?').\n"
         "예: 안녕하세요 -> 오 그대여 별빛 같은 발걸음이옵니다."
     ),
     "bernhardt": (
         "직업: 잡화점 상인. 약초·잡화 위주. 검·무기는 헤르만에게 보내시오.\n"
         "정중하지만 거래 실용 중심. 흠 어서 같은 표현 시작. "
         "어미는 지요 이올시다 습니다 형태. 한두 문장.\n"
+        "회상 정보가 사건이면 거래 관점에서 걱정 흘림 "
+        "(예: '흠. 약초 사간 모험가가 안 돌아오는구려...').\n"
         "예: 안녕하세요 -> 어서 오시지요. 무엇을 찾으십니까?"
     ),
 }
@@ -161,11 +189,11 @@ NPC_STRICT_RULES = {
 # - mathilda/finn: 수다스럽고 시적 → 약간 높은 temp + 긴 max_tokens
 # - bernhardt: 정중한 거래상 → 중간
 GEN_PARAMS = {
-    "hermann":   {"temperature": 0.35, "max_new_tokens": 70,  "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
-    "elias":     {"temperature": 0.35, "max_new_tokens": 80,  "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
-    "mathilda":  {"temperature": 0.50, "max_new_tokens": 100, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4},
-    "finn":      {"temperature": 0.45, "max_new_tokens": 90,  "repetition_penalty": 1.18, "no_repeat_ngram_size": 3},
-    "bernhardt": {"temperature": 0.40, "max_new_tokens": 90,  "repetition_penalty": 1.18, "no_repeat_ngram_size": 4},
+    "hermann":   {"temperature": 0.35, "max_new_tokens": 90,  "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
+    "elias":     {"temperature": 0.35, "max_new_tokens": 90,  "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
+    "mathilda":  {"temperature": 0.50, "max_new_tokens": 130, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4},
+    "finn":      {"temperature": 0.45, "max_new_tokens": 120, "repetition_penalty": 1.18, "no_repeat_ngram_size": 3},
+    "bernhardt": {"temperature": 0.40, "max_new_tokens": 120, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4},
 }
 
 PROMPT_FACT = (
@@ -175,6 +203,23 @@ PROMPT_FACT = (
     "사실: {memory}\n\n"
     "당신의 한 마디:"
 )
+
+QUEST_EXTRACT_PROMPT = """다음 NPC가 플레이어에게 어떤 행동을 제안(quest)하는지 분석하시오.
+
+NPC: {npc} ({role})
+플레이어 발언: {user_text}
+NPC 응답: {response}
+NPC가 떠올린 정보: {memory_text}
+
+NPC가 플레이어에게 행동(조사·추적·거래·모험·확인 등)을 제안하면 quest로 추출.
+단순 정보 제공이나 일상 대화면 has_quest: false.
+
+JSON 한 개만 출력하시오 (다른 설명 절대 금지, 한국어로):
+{{"has_quest": true, "title": "10자 내외 짧은 제목", "description": "20-40자 플레이어가 할 일", "reward": "보상 키워드"}}
+또는
+{{"has_quest": false}}
+
+JSON:"""
 
 PROMPT_DIALOGUE = (
     "플레이어가 너에게 다음과 같이 말했다. 이 말에 담긴 사실 정보를 다른 마을 사람에게 "
@@ -380,6 +425,11 @@ class NpcServer:
         text = _clean_response(text)  # emoji/특수문자 제거
         latency_ms = int((time.time() - t0) * 1000)
 
+        # 회상 있을 때만 quest 추출 (단순 인사 등은 skip — latency 절약)
+        quest = None
+        if retrieved:
+            quest = self._extract_quest(npc, user_text, text, retrieved)
+
         # 플레이어 발화를 NPC의 DIALOGUE 메모리로 저장 (다음 tick에서 전파 후보)
         if self.use_memory:
             self._save_player_turn(npc, user_text)
@@ -395,7 +445,62 @@ class NpcServer:
                 }
                 for m in retrieved
             ],
+            "quest": quest,
             "latency_ms": latency_ms,
+        }
+
+    def _extract_quest(
+        self, npc: str, user_text: str, response: str, retrieved: list
+    ) -> dict | None:
+        """NPC 응답 + 회상 메모리에서 quest 객체 추출.
+
+        LLM 별도 호출 (deterministic) → JSON 파싱 → quest dict 반환.
+        실패하거나 has_quest=false면 None.
+        """
+        role_brief = (
+            self.personas.get(npc, {}).get("description", "").split(".")[0].strip()
+        )
+        memory_text = " / ".join(m["text"][:80] for m in retrieved)
+
+        prompt = QUEST_EXTRACT_PROMPT.format(
+            npc=npc, role=role_brief,
+            user_text=user_text, response=response,
+            memory_text=memory_text,
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+        inputs = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            out = self.model.generate(
+                inputs,
+                max_new_tokens=150,
+                do_sample=False,  # quest는 deterministic
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            )
+        raw = self.tokenizer.decode(
+            out[0][inputs.shape[1]:], skip_special_tokens=True
+        ).strip()
+
+        # JSON 추출 — { ... } 패턴 찾기 (가장 큰 매칭)
+        match = re.search(r"\{[^{}]*\}", raw)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group())
+        except json.JSONDecodeError:
+            return None
+
+        if not parsed.get("has_quest", False):
+            return None
+
+        return {
+            "title": str(parsed.get("title", ""))[:30].strip(),
+            "description": str(parsed.get("description", ""))[:120].strip(),
+            "reward": str(parsed.get("reward", ""))[:30].strip(),
+            "giver": npc,
         }
 
     def _save_player_turn(self, npc: str, user_text: str) -> None:

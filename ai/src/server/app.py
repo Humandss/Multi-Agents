@@ -42,7 +42,12 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Korean NPC Dialogue Server")
 
     print("[app] NpcServer 초기화 중...")
-    engine = NpcServer(adapters_dir=ADAPTERS_DIR, chroma_dir=CHROMA_DIR)
+    # use_memory=True: ChromaDB 회상 활성화 (단계적 접근 2단계)
+    engine = NpcServer(
+        adapters_dir=ADAPTERS_DIR,
+        chroma_dir=CHROMA_DIR,
+        use_memory=True,
+    )
     print("[app] 준비 완료")
     app.state.engine = engine
 
@@ -79,6 +84,7 @@ def create_app() -> FastAPI:
                     "text": result["text"],
                     "latency_ms": result["latency_ms"],
                     "memories_used": result.get("memories_used", []),
+                    "quest": result.get("quest"),
                 })
             except Exception as e:
                 responses.append({

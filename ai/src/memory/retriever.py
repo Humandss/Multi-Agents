@@ -25,17 +25,17 @@ class MemoryRetriever:
         w_sim=0.70,
         w_imp=0.10,
         w_rec=0.20,
-        min_similarity: float = 0.55,
+        min_similarity: float = 0.50,
         propagation_bonus: float = 0.05,
     ):
         """가중점수: w_sim*sim + w_imp*imp + w_rec*recency + propagation_bonus(if propagation).
 
         - w_sim 0.75 → 0.70 (의미 유사도 비중 약간 ↓, 다양성 ↑)
         - w_rec 0.15 → 0.20 (최근 propagation 정보 우선)
-        - min_similarity 0.55: BGE-M3 한국어 짧은 발화 baseline ~0.5 측정 결과
-          (예: "안녕하세요" ↔ propagation 메모리 sim≈0.51). 0.50은 noise floor를
-          못 막아 generic 인사에도 무관 회상 발생. 0.55가 noise 차단 + 의미있는
-          매칭 보존 균형점.
+        - min_similarity 0.50: LoRA 폐기 + LLM-only 환경에서는 회상이 핵심 가치라
+          0.55에서 0.50으로 낮춤. 측정 결과 elias 0.545, finn 0.494 같은 정당한
+          매칭이 0.55 임계값 바로 아래로 떨어져 회상 실패. short query (<8자)는
+          retriever.search에서 별도 스킵 처리하므로 generic noise는 그쪽에서 차단.
         - propagation_bonus — 체인 거친 정보가 더 잘 떠오르도록
         """
         self.store = store

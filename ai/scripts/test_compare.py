@@ -45,6 +45,23 @@ def print_responses(result: dict):
             print(f"  ❌ {npc:>10}: [error] {r['error']}")
         else:
             print(f"  {npc:>10} ({latency:>5}ms): {text}")
+            # 회상된 메모리 표시 (use_memory=True 때만)
+            mems = r.get("memories_used", [])
+            for m in mems:
+                src = m.get("source", "?")
+                imp = m.get("importance", "?")
+                mtxt = m.get("text", "")[:80]
+                print(f"           ↳ [{src} imp={imp}] {mtxt}")
+            # quest 표시
+            quest = r.get("quest")
+            if quest:
+                title = quest.get("title", "")
+                desc = quest.get("description", "")
+                reward = quest.get("reward", "")
+                print(f"           ★ QUEST: {title}")
+                print(f"             - {desc}")
+                if reward:
+                    print(f"             - 보상: {reward}")
     print('=' * 70 + "\n")
 
 
