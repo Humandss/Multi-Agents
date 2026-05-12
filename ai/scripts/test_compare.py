@@ -45,6 +45,18 @@ def print_responses(result: dict):
             print(f"  ❌ {npc:>10}: [error] {r['error']}")
         else:
             print(f"  {npc:>10} ({latency:>5}ms): {text}")
+            # 신뢰도 표시
+            trust = r.get("trust")
+            trust_label = r.get("trust_label", "")
+            trust_delta = r.get("trust_delta", 0)
+            if trust is not None:
+                if trust_delta > 0:
+                    delta_str = f"+{trust_delta}"
+                elif trust_delta < 0:
+                    delta_str = f"{trust_delta}"
+                else:
+                    delta_str = "±0"
+                print(f"           ♥ 친밀도 {delta_str} → {trust}/100 ({trust_label})")
             # 회상된 메모리 표시 (use_memory=True 때만)
             mems = r.get("memories_used", [])
             for m in mems:

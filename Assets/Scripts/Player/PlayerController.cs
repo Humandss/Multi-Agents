@@ -56,8 +56,9 @@ namespace NpcChat
 
         void Update()
         {
-            // ESC로 커서 lock 토글 (UI 작업 편하게)
-            if (Input.GetKeyDown(KeyCode.Escape))
+            // ESC는 DialogueManager가 전용 처리. PlayerController는 ESC 무시.
+            // 디버그용 cursor unlock이 필요하면 F12 등 다른 키 사용.
+            if (Input.GetKeyDown(KeyCode.F12))
                 LockCursor(Cursor.lockState != CursorLockMode.Locked);
 
             if (inputLocked)

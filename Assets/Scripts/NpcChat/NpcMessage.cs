@@ -34,14 +34,35 @@ namespace NpcChat
         public string text;
         public int latency_ms;
         public Memory[] memories_used;
+        public Quest quest;     // null 또는 비어있으면 quest 없음
+
+        // trust/friendship
+        public int trust;          // 0-100 (default 30)
+        public string trust_label; // 낯선 사람 / 지인 / 친구 / 절친
+        public int trust_delta;    // 이번 turn 변화량 (+1 etc.)
 
         // tick events
         public int day;
         public TickEvent[] events;
         public MemoryCount[] memory_counts;  // (사용 안 함, 아래 dict는 JsonUtility 미지원)
 
+        // npc-npc conversation (Phase 2)
+        public string npc_a;
+        public string npc_b;
+        public string topic;
+        public ConversationTurn[] turns;
+        public bool memory_saved;
+
         // error
         public string message;
+    }
+
+    [Serializable]
+    public class ConversationTurn
+    {
+        public string speaker;
+        public string speaker_ko;
+        public string text;
     }
 
     [Serializable]
@@ -50,6 +71,20 @@ namespace NpcChat
         public string text;
         public int importance;
         public string source;   // seed | observation | dialogue | propagation
+    }
+
+    /// <summary>
+    /// NPC가 생성한 quest. JsonUtility 한계로 null 체크는 title 비어있는지로 판단.
+    /// </summary>
+    [Serializable]
+    public class Quest
+    {
+        public string title;
+        public string description;
+        public string reward;
+        public string giver;
+
+        public bool IsValid => !string.IsNullOrEmpty(title);
     }
 
     [Serializable]

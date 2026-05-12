@@ -6,6 +6,7 @@
 """
 
 import json
+import random
 import re
 import time
 import uuid
@@ -231,6 +232,79 @@ PROMPT_DIALOGUE = (
 )
 
 
+class TrustTracker:
+    """NPC별로 플레이어 신뢰도(0-100) 추적.
+
+    - default 30 (지인)
+    - 대화 1회 +1 (자연 증가)
+    - 긍정 키워드 +1 추가
+    - 부정 키워드 -5
+    - quest 완수 +10
+    """
+    DEFAULT_TRUST = 30
+    POSITIVE_KEYWORDS = [
+        "감사", "고마", "도와", "도울", "부탁", "안녕", "수고",
+        "잘 부탁", "친절", "고맙", "최고", "멋져", "훌륭",
+    ]
+    NEGATIVE_KEYWORDS = [
+        "꺼져", "닥쳐", "바보", "멍청", "싫어", "거짓말", "사기",
+    ]
+
+    def __init__(self):
+        self._trust: dict[str, int] = {}
+        self._interactions: dict[str, int] = {}
+
+    def get(self, npc: str) -> int:
+        return self._trust.get(npc, self.DEFAULT_TRUST)
+
+    def label(self, npc: str) -> str:
+        t = self.get(npc)
+        if t < 20: return "낯선 사람"
+        if t < 50: return "지인"
+        if t < 80: return "친구"
+        return "절친"
+
+    def disclosure_hint(self, npc: str) -> str:
+        """system prompt에 들어갈 친밀도 지침 — 한 줄."""
+        t = self.get(npc)
+        if t < 20:
+            return "친밀도 낮음 (낯선 사람). 표면적·공개 정보만. 개인사·비밀 절대 X."
+        if t < 50:
+            return "친밀도 보통 (지인). 일반 정보 자유롭게. 개인사는 자제."
+        if t < 80:
+            return "친밀도 높음 (친구). 개인사·과거 이야기 공유 가능."
+        return "친밀도 매우 높음 (절친). 깊은 비밀·트라우마까지 털어놓을 수 있음."
+
+    def on_player_turn(self, npc: str, user_text: str) -> int:
+        """플레이어 발화 후 신뢰도 업데이트. 변화량(delta) 반환."""
+        delta = 1  # 대화 1회 +1
+        if any(k in user_text for k in self.POSITIVE_KEYWORDS):
+            delta += 1
+        if any(k in user_text for k in self.NEGATIVE_KEYWORDS):
+            delta = -5
+        new_val = max(0, min(100, self.get(npc) + delta))
+        self._trust[npc] = new_val
+        self._interactions[npc] = self._interactions.get(npc, 0) + 1
+        return delta
+
+    def on_quest_complete(self, npc: str) -> int:
+        """Quest 완수 시 +10."""
+        old = self.get(npc)
+        new_val = min(100, old + 10)
+        self._trust[npc] = new_val
+        return new_val - old
+
+    def set(self, npc: str, value: int):
+        self._trust[npc] = max(0, min(100, value))
+
+    def snapshot(self) -> dict:
+        return {
+            npc: {"trust": self.get(npc), "label": self.label(npc),
+                  "interactions": self._interactions.get(npc, 0)}
+            for npc in set(list(self._trust.keys()) + list(self._interactions.keys()))
+        }
+
+
 class NpcServer:
     def __init__(
         self,
@@ -311,6 +385,7 @@ class NpcServer:
 
         self.day = 0
         self._transform_cache: dict = {}
+        self.trust = TrustTracker()
 
         # 페르소나 정의 로드 (system prompt에 사용)
         personas_path = Path(__file__).resolve().parents[2] / "data" / "eval" / "test_prompts.yaml"
@@ -353,6 +428,7 @@ class NpcServer:
         )
 
         strict_rule = NPC_STRICT_RULES.get(npc, "")
+        trust_hint = self.trust.disclosure_hint(npc)
 
         return (
             f"당신은 {npc}입니다. {desc}\n"
@@ -361,6 +437,7 @@ class NpcServer:
             f"{strict_rule}\n"
             f"다른 마을 사람: {others}. 이들의 이름과 직업을 절대 바꾸지 마시오 "
             "(예: mathilda를 마트닐라로 변형 금지).\n"
+            f"{trust_hint}\n"
             f"{memory_hint}"
             "한국어로만 답하시오. 영어/외국어/이모지/특수문자(♪✨ 등) 절대 금지."
         )
@@ -434,6 +511,9 @@ class NpcServer:
         if self.use_memory:
             self._save_player_turn(npc, user_text)
 
+        # 신뢰도 업데이트 (응답 후, 다음 대화부터 영향)
+        trust_delta = self.trust.on_player_turn(npc, user_text)
+
         return {
             "npc": npc,
             "text": text,
@@ -446,8 +526,220 @@ class NpcServer:
                 for m in retrieved
             ],
             "quest": quest,
+            "trust": self.trust.get(npc),
+            "trust_label": self.trust.label(npc),
+            "trust_delta": trust_delta,
             "latency_ms": latency_ms,
         }
+
+    def complete_quest(self, npc: str) -> dict:
+        """Quest 완수 시 호출 — 신뢰도 +10."""
+        if npc not in self.characters:
+            raise ValueError(f"알 수 없는 NPC: {npc}")
+        delta = self.trust.on_quest_complete(npc)
+        return {
+            "npc": npc,
+            "trust": self.trust.get(npc),
+            "trust_label": self.trust.label(npc),
+            "trust_delta": delta,
+        }
+
+    # ---------- NPC-NPC 자율 대화 (Park et al. 2023 스타일) ----------
+    def _generate_for_npc(
+        self,
+        npc: str,
+        messages: list[dict],
+        max_new_tokens: int | None = None,
+    ) -> str:
+        """공통 generate 헬퍼. messages = [system, user, assistant, ...] chat 포맷."""
+        gp = GEN_PARAMS.get(npc, {
+            "temperature": 0.5, "max_new_tokens": 120,
+            "repetition_penalty": 1.15, "no_repeat_ngram_size": 4,
+        })
+        if self.use_lora:
+            self.model.set_adapter(npc)
+        inputs = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+        ).to(self.model.device)
+        with torch.no_grad():
+            out = self.model.generate(
+                inputs,
+                max_new_tokens=max_new_tokens or gp["max_new_tokens"],
+                do_sample=True,
+                temperature=gp["temperature"],
+                top_p=0.9,
+                top_k=50,
+                repetition_penalty=gp["repetition_penalty"],
+                no_repeat_ngram_size=gp["no_repeat_ngram_size"],
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            )
+        text = self.tokenizer.decode(
+            out[0][inputs.shape[1]:], skip_special_tokens=True
+        ).strip()
+        return _clean_response(text)
+
+    def simulate_conversation(
+        self,
+        npc_a: str,
+        npc_b: str,
+        topic: str | None = None,
+        num_turns: int = 3,
+    ) -> dict:
+        """두 NPC가 자율적으로 대화하고 결과를 각자 메모리에 저장.
+
+        Park et al. (Generative Agents) 스타일 NPC-NPC 대화.
+
+        - num_turns: 각 NPC가 발화하는 횟수 (총 발화 ≤ num_turns × 2)
+        - topic: 대화 주제 시드. None이면 npc_a 메모리에서 1개 선정.
+        - 결과 대화 전체를 양쪽 DIALOGUE 메모리에 저장.
+        """
+        if npc_a not in self.characters:
+            raise ValueError(f"알 수 없는 NPC: {npc_a}")
+        if npc_b not in self.characters:
+            raise ValueError(f"알 수 없는 NPC: {npc_b}")
+        if npc_a == npc_b:
+            raise ValueError("같은 NPC끼리 대화 불가")
+
+        # topic 자동 선정: npc_a 메모리 중 importance 높은 것 위주
+        if topic is None:
+            try:
+                # importance 6+ memory 위주 검색
+                cand = self.retrievers[npc_a].search("마을 사건 소식", k=3)
+                if cand:
+                    topic = random.choice(cand)["text"]
+                else:
+                    topic = "마을 근황"
+            except Exception:
+                topic = "마을 근황"
+
+        # 한국어 NPC 이름 (system prompt 영문 leak 회피)
+        ko_name = {
+            "elias": "엘리아스", "hermann": "헤르만", "mathilda": "마틸다",
+            "finn": "핀", "bernhardt": "베른하르트",
+        }
+        ko_a = ko_name.get(npc_a, npc_a)
+        ko_b = ko_name.get(npc_b, npc_b)
+
+        turns: list[dict] = []
+
+        # 시작 turn: npc_a가 화제 던지기
+        opener_prompt = (
+            f"당신은 지금 마을에서 {ko_b}을(를) 만났습니다. "
+            f"다음 화제에 대해 자연스럽게 한두 문장으로 말 거시오 "
+            f"(인사 + 짧은 화제 제기). 어조는 페르소나대로.\n"
+            f"화제: {topic}"
+        )
+        a_messages = [
+            {"role": "system", "content": self._build_system_prompt(npc_a)},
+            {"role": "user", "content": opener_prompt},
+        ]
+        first_text = self._generate_for_npc(npc_a, a_messages)
+        turns.append({"speaker": npc_a, "speaker_ko": ko_a, "text": first_text})
+
+        # 각 NPC 시점의 대화 history (chat format)
+        a_history = [
+            {"role": "system", "content": self._build_system_prompt(npc_a)},
+            {"role": "user", "content": opener_prompt},
+            {"role": "assistant", "content": first_text},
+        ]
+        b_history = [
+            {"role": "system", "content": self._build_system_prompt(npc_b)},
+            {"role": "user", "content": f"{ko_a}가 당신에게 말했다: \"{first_text}\""},
+        ]
+
+        last_speaker = npc_a
+        # 남은 발화 횟수 = num_turns*2 - 1 (이미 1번 발화함)
+        for _ in range(num_turns * 2 - 1):
+            responder = npc_b if last_speaker == npc_a else npc_a
+            other = npc_a if responder == npc_b else npc_b
+            ko_responder = ko_b if responder == npc_b else ko_a
+            ko_other = ko_a if responder == npc_b else ko_b
+
+            hist = b_history if responder == npc_b else a_history
+            response = self._generate_for_npc(responder, hist)
+            turns.append({
+                "speaker": responder, "speaker_ko": ko_responder, "text": response
+            })
+
+            # 양쪽 history 갱신
+            if responder == npc_b:
+                b_history.append({"role": "assistant", "content": response})
+                a_history.append({
+                    "role": "user",
+                    "content": f"{ko_b}가 답했다: \"{response}\"",
+                })
+            else:
+                a_history.append({"role": "assistant", "content": response})
+                b_history.append({
+                    "role": "user",
+                    "content": f"{ko_a}가 답했다: \"{response}\"",
+                })
+
+            last_speaker = responder
+
+        # 메모리 저장: 각 NPC가 본인 시점에서 대화를 기억
+        # (LLM 요약 생략하고, 대화 일부를 그대로 저장 — 간단하게)
+        convo_text_for_a = self._format_conversation_memory(turns, ko_other=ko_b)
+        convo_text_for_b = self._format_conversation_memory(turns, ko_other=ko_a)
+
+        entry_a = MemoryEntry(
+            id=f"conv_{uuid.uuid4().hex[:8]}",
+            text=convo_text_for_a,
+            importance=6,
+            timestamp=datetime.now(timezone.utc),
+            source=MemorySource.CONVERSATION,
+            metadata={
+                "npc_conversation": True, "other_npc": npc_b,
+                "day": self.day, "topic": topic[:80],
+            },
+        )
+        self.stores[npc_a].add(entry_a)
+
+        entry_b = MemoryEntry(
+            id=f"conv_{uuid.uuid4().hex[:8]}",
+            text=convo_text_for_b,
+            importance=6,
+            timestamp=datetime.now(timezone.utc),
+            source=MemorySource.CONVERSATION,
+            metadata={
+                "npc_conversation": True, "other_npc": npc_a,
+                "day": self.day, "topic": topic[:80],
+            },
+        )
+        self.stores[npc_b].add(entry_b)
+
+        return {
+            "npc_a": npc_a,
+            "npc_b": npc_b,
+            "topic": topic[:120],
+            "turns": turns,
+            "memory_saved": True,
+            "day": self.day,
+        }
+
+    @staticmethod
+    def _format_conversation_memory(turns: list[dict], ko_other: str) -> str:
+        """대화 전체를 한 메모리 텍스트로 압축. {ko_other}와 나눈 대화로 기록."""
+        lines = []
+        for t in turns:
+            lines.append(f"{t['speaker_ko']}: {t['text'][:120]}")
+        body = " / ".join(lines)
+        return f"{ko_other}와 대화: {body}"
+
+    def pick_random_pair(self) -> tuple[str, str] | None:
+        """관계 그래프 edge 중 1쌍 무작위 선택 (NPC-NPC 자율 대화용).
+
+        graph가 없으면 character list에서 2명 무작위 선정.
+        """
+        if self.graph is not None:
+            edges = list(self.graph.edges())
+            if edges:
+                a, b, _freq = random.choice(edges)
+                return a, b
+        if len(self.characters) < 2:
+            return None
+        a, b = random.sample(self.characters, 2)
+        return a, b
 
     def _extract_quest(
         self, npc: str, user_text: str, response: str, retrieved: list
@@ -595,9 +887,19 @@ class NpcServer:
         self._transform_cache[cache_key] = text
         return text
 
-    # ---------- 시간 진행 (정보 전파 tick) ----------
-    def tick(self, day: int | None = None) -> dict:
-        """하루치 정보 전파 시뮬레이션 실행 + 이벤트 반환."""
+    # ---------- 시간 진행 (정보 전파 + NPC-NPC 자율 대화) ----------
+    def tick(
+        self,
+        day: int | None = None,
+        npc_conversation: bool = True,
+        npc_conversation_turns: int = 2,
+    ) -> dict:
+        """하루치 정보 전파 시뮬레이션 + 1쌍 NPC-NPC 자율 대화.
+
+        - 1단계: propagation (전파)
+        - 2단계: graph 무작위 페어 → simulate_conversation (Park et al. style)
+        - 두 결과 묶어 반환
+        """
         if self.graph is None:
             return {"day": self.day, "events": [], "error": "관계 그래프 없음"}
         if day is None:
@@ -606,13 +908,31 @@ class NpcServer:
         else:
             self.day = day
 
+        # 1단계: propagation
         sim = PropagationSimulator(
             graph=self.graph,
             stores=self.stores,
             transformer=self,
         )
         events = sim.tick(day)
-        return {"day": day, "events": events}
+
+        # 2단계: NPC-NPC 자율 대화 1쌍 (옵션)
+        conversation_result = None
+        if npc_conversation:
+            pair = self.pick_random_pair()
+            if pair is not None:
+                try:
+                    conversation_result = self.simulate_conversation(
+                        pair[0], pair[1], num_turns=npc_conversation_turns
+                    )
+                except Exception as e:
+                    print(f"[tick] NPC-NPC 대화 실패: {e}")
+
+        return {
+            "day": day,
+            "events": events,
+            "conversation": conversation_result,
+        }
 
     def memory_counts(self) -> dict[str, int]:
         return {npc: self.stores[npc].count() for npc in self.characters}

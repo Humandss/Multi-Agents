@@ -85,6 +85,9 @@ def create_app() -> FastAPI:
                     "latency_ms": result["latency_ms"],
                     "memories_used": result.get("memories_used", []),
                     "quest": result.get("quest"),
+                    "trust": result.get("trust"),
+                    "trust_label": result.get("trust_label"),
+                    "trust_delta": result.get("trust_delta"),
                 })
             except Exception as e:
                 responses.append({
@@ -94,6 +97,96 @@ def create_app() -> FastAPI:
                 })
 
         return JSONResponse({"input": text, "responses": responses})
+
+    @app.get("/trust")
+    def get_trust():
+        """전체 NPC 신뢰도 스냅샷."""
+        return JSONResponse({"trust": engine.trust.snapshot()})
+
+    @app.post("/quest_complete/{npc}")
+    def quest_complete(npc: str):
+        """Quest 완수 시 호출 — 해당 NPC 신뢰도 +10."""
+        try:
+            result = engine.complete_quest(npc)
+            return JSONResponse(result)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/simulate/{npc_a}/{npc_b}")
+    def simulate_npc_conversation(npc_a: str, npc_b: str, num_turns: int = 3):
+        """두 NPC가 자율적으로 대화. 결과를 양쪽 메모리에 저장.
+
+        Park et al. (Generative Agents) 스타일.
+        Query: ?num_turns=3 (각 NPC 발화 횟수, 총 발화 ≤ num_turns × 2).
+        """
+        try:
+            result = engine.simulate_conversation(npc_a, npc_b, num_turns=num_turns)
+            return JSONResponse(result)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/simulate_random")
+    def simulate_random_pair(num_turns: int = 3):
+        """관계 그래프에서 무작위 페어 1쌍 선정 → 대화 시뮬."""
+        pair = engine.pick_random_pair()
+        if pair is None:
+            return JSONResponse({"error": "페어 선정 실패"}, status_code=400)
+        a, b = pair
+        try:
+            result = engine.simulate_conversation(a, b, num_turns=num_turns)
+            return JSONResponse(result)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/tick")
+    def tick_http(npc_conversation: bool = True, num_turns: int = 2):
+        """시간 진행 (HTTP). propagation + NPC-NPC 자율 대화.
+
+        응답은 WebSocket tick_events와 동일하게 평탄화 (Unity JsonUtility 호환).
+        """
+        try:
+            result = engine.tick(
+                npc_conversation=npc_conversation,
+                npc_conversation_turns=num_turns,
+            )
+            # event 직렬화
+            serialized_events = [
+                {
+                    "day": ev["day"],
+                    "from": ev["from"],
+                    "to": ev["to"],
+                    "original": ev["original"][:120],
+                    "transformed": ev["transformed"][:120],
+                    "importance_before": ev["importance_before"],
+                    "importance_after": ev["importance_after"],
+                }
+                for ev in result.get("events", [])
+            ]
+            payload = {
+                "type": "tick_events",
+                "day": result["day"],
+                "events": serialized_events,
+                "memory_counts_dict": engine.memory_counts(),
+            }
+            conv = result.get("conversation")
+            if conv is not None:
+                payload["npc_a"] = conv.get("npc_a", "")
+                payload["npc_b"] = conv.get("npc_b", "")
+                payload["topic"] = (conv.get("topic", "") or "")[:120]
+                payload["turns"] = [
+                    {
+                        "speaker": t["speaker"],
+                        "speaker_ko": t.get("speaker_ko", t["speaker"]),
+                        "text": t["text"][:200],
+                    }
+                    for t in conv.get("turns", [])
+                ]
+                payload["memory_saved"] = bool(conv.get("memory_saved", False))
+            return JSONResponse(payload)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     # 한 세션 = 한 대화. 직전 6쌍(=12 메시지) 유지해서 멀티턴 흐름 살림.
     HISTORY_TURNS = 6
@@ -141,12 +234,28 @@ def create_app() -> FastAPI:
                             "importance_before": ev["importance_before"],
                             "importance_after": ev["importance_after"],
                         })
-                    await ws.send_json({
+                    # NPC-NPC 대화 결과 (있을 시)
+                    conv = result.get("conversation")
+                    payload = {
                         "type": "tick_events",
                         "day": result["day"],
                         "events": serialized,
                         "memory_counts": engine.memory_counts(),
-                    })
+                    }
+                    if conv is not None:
+                        payload["npc_a"] = conv.get("npc_a", "")
+                        payload["npc_b"] = conv.get("npc_b", "")
+                        payload["topic"] = (conv.get("topic", "") or "")[:120]
+                        payload["turns"] = [
+                            {
+                                "speaker": t["speaker"],
+                                "speaker_ko": t.get("speaker_ko", t["speaker"]),
+                                "text": t["text"][:200],
+                            }
+                            for t in conv.get("turns", [])
+                        ]
+                        payload["memory_saved"] = bool(conv.get("memory_saved", False))
+                    await ws.send_json(payload)
                     continue
                 if msg_type != "chat":
                     await ws.send_json({"type": "error", "message": "unsupported type"})
