@@ -32,8 +32,8 @@ class PropagationSimulator:
         stores: dict[str, MemoryStore],
         transformer: PersonaTransformer,
         rng_seed: int = 42,
-        importance_threshold: int = 6,
-        max_memories_per_meeting: int = 3,
+        importance_threshold: int = 7,  # 6→7: 중요한 사건만 전파 (LLM 호출 ↓)
+        max_memories_per_meeting: int = 2,  # 3→2: 만남당 메모리 수 ↓
     ):
         self.graph = graph
         self.stores = stores

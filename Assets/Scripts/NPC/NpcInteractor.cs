@@ -23,10 +23,10 @@ namespace NpcChat
         public GameObject interactionHint;
 
         [Header("Center Screen Prompt")]
-        [Tooltip("화면 중앙에 \"???과 얘기하기\" 같은 안내. InteractionPromptManager 사용.")]
+        [Tooltip("화면 중앙에 \"이름과 얘기하기\" 안내. InteractionPromptManager 사용.")]
         public bool useCenterPrompt = true;
-        [Tooltip("프롬프트 형식 — {npc}는 NPC 이름, {key}는 키 이름으로 치환. ???로 두고 싶으면 그냥 ???.")]
-        public string promptFormat = "???과 얘기하기 [{key}]";
+        [Tooltip("프롬프트 형식.")]
+        public string promptFormat = "{npc}과 얘기하기 [{key}]";
 
         private Transform _player;
         private bool _isPlayerNear = false;
@@ -58,7 +58,8 @@ namespace NpcChat
                     if (_isPlayerNear)
                     {
                         string text = promptFormat
-                            .Replace("{npc}", npcName)
+                            .Replace("???", gameObject.name)
+                            .Replace("{npc}", gameObject.name)
                             .Replace("{key}", interactionKey.ToString());
                         InteractionPromptManager.Instance.Show(text);
                     }

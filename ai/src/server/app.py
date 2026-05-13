@@ -51,14 +51,32 @@ def create_app() -> FastAPI:
     print("[app] 준비 완료")
     app.state.engine = engine
 
+    # 외부 인터페이스용 이름 표시: hermann → Hermann
+    # 내부(ChromaDB·persona·memory) ID는 그대로 소문자 유지.
+    def display(name: str) -> str:
+        return name[:1].upper() + name[1:] if name else name
+
+    def normalize(name: str) -> str:
+        """외부에서 들어온 이름(대소문자 무관)을 내부 소문자 ID로."""
+        if not name:
+            return name
+        low = name.lower()
+        return low if low in engine.characters else name
+
+    def add_display_npc(d: dict) -> dict:
+        """respond/quest_complete 결과 dict의 npc 필드를 capitalize."""
+        if "npc" in d and isinstance(d["npc"], str):
+            d["npc"] = display(d["npc"])
+        return d
+
     @app.get("/healthz")
     def healthz():
-        return {"status": "ok", "npcs": engine.characters}
+        return {"status": "ok", "npcs": [display(n) for n in engine.characters]}
 
     @app.get("/npcs")
     def list_npcs():
         return JSONResponse({
-            npc: {
+            display(npc): {
                 "memory_count": engine.stores[npc].count(),
             }
             for npc in engine.characters
@@ -80,7 +98,7 @@ def create_app() -> FastAPI:
             try:
                 result = engine.respond(npc, text, history=None)
                 responses.append({
-                    "npc": npc,
+                    "npc": display(npc),
                     "text": result["text"],
                     "latency_ms": result["latency_ms"],
                     "memories_used": result.get("memories_used", []),
@@ -91,7 +109,7 @@ def create_app() -> FastAPI:
                 })
             except Exception as e:
                 responses.append({
-                    "npc": npc,
+                    "npc": display(npc),
                     "text": "",
                     "error": str(e),
                 })
@@ -101,16 +119,28 @@ def create_app() -> FastAPI:
     @app.get("/trust")
     def get_trust():
         """전체 NPC 신뢰도 스냅샷."""
-        return JSONResponse({"trust": engine.trust.snapshot()})
+        snap = engine.trust.snapshot()
+        return JSONResponse({
+            "trust": {display(k): v for k, v in snap.items()}
+        })
 
     @app.post("/quest_complete/{npc}")
     def quest_complete(npc: str):
         """Quest 완수 시 호출 — 해당 NPC 신뢰도 +10."""
         try:
-            result = engine.complete_quest(npc)
-            return JSONResponse(result)
+            result = engine.complete_quest(normalize(npc))
+            return JSONResponse(add_display_npc(result))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+
+    def _decorate_conversation(result: dict) -> dict:
+        """simulate_conversation 결과의 NPC 이름들을 표시용으로."""
+        if "npc_a" in result: result["npc_a"] = display(result["npc_a"])
+        if "npc_b" in result: result["npc_b"] = display(result["npc_b"])
+        if "turns" in result:
+            for t in result["turns"]:
+                if "speaker" in t: t["speaker"] = display(t["speaker"])
+        return result
 
     @app.post("/simulate/{npc_a}/{npc_b}")
     def simulate_npc_conversation(npc_a: str, npc_b: str, num_turns: int = 3):
@@ -120,8 +150,10 @@ def create_app() -> FastAPI:
         Query: ?num_turns=3 (각 NPC 발화 횟수, 총 발화 ≤ num_turns × 2).
         """
         try:
-            result = engine.simulate_conversation(npc_a, npc_b, num_turns=num_turns)
-            return JSONResponse(result)
+            result = engine.simulate_conversation(
+                normalize(npc_a), normalize(npc_b), num_turns=num_turns
+            )
+            return JSONResponse(_decorate_conversation(result))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         except Exception as e:
@@ -136,7 +168,7 @@ def create_app() -> FastAPI:
         a, b = pair
         try:
             result = engine.simulate_conversation(a, b, num_turns=num_turns)
-            return JSONResponse(result)
+            return JSONResponse(_decorate_conversation(result))
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -155,8 +187,8 @@ def create_app() -> FastAPI:
             serialized_events = [
                 {
                     "day": ev["day"],
-                    "from": ev["from"],
-                    "to": ev["to"],
+                    "from": display(ev["from"]),
+                    "to": display(ev["to"]),
                     "original": ev["original"][:120],
                     "transformed": ev["transformed"][:120],
                     "importance_before": ev["importance_before"],
@@ -168,16 +200,16 @@ def create_app() -> FastAPI:
                 "type": "tick_events",
                 "day": result["day"],
                 "events": serialized_events,
-                "memory_counts_dict": engine.memory_counts(),
+                "memory_counts_dict": {display(k): v for k, v in engine.memory_counts().items()},
             }
             conv = result.get("conversation")
             if conv is not None:
-                payload["npc_a"] = conv.get("npc_a", "")
-                payload["npc_b"] = conv.get("npc_b", "")
+                payload["npc_a"] = display(conv.get("npc_a", ""))
+                payload["npc_b"] = display(conv.get("npc_b", ""))
                 payload["topic"] = (conv.get("topic", "") or "")[:120]
                 payload["turns"] = [
                     {
-                        "speaker": t["speaker"],
+                        "speaker": display(t["speaker"]),
                         "speaker_ko": t.get("speaker_ko", t["speaker"]),
                         "text": t["text"][:200],
                     }
@@ -193,12 +225,15 @@ def create_app() -> FastAPI:
 
     @app.websocket("/ws/{npc_name}")
     async def chat_ws(ws: WebSocket, npc_name: str):
-        if npc_name not in engine.characters:
+        # 대소문자 무관 매칭: Hermann/hermann/HERMANN 모두 받아줌
+        npc_internal = normalize(npc_name)
+        if npc_internal not in engine.characters:
             await ws.close(code=1008, reason=f"unknown npc: {npc_name}")
             return
+        npc_name = npc_internal  # 이후 로직은 소문자 ID로 동작
 
         await ws.accept()
-        await ws.send_json({"type": "ready", "npc": npc_name})
+        await ws.send_json({"type": "ready", "npc": display(npc_name)})
 
         history: list[dict] = []
 
@@ -227,8 +262,8 @@ def create_app() -> FastAPI:
                     for ev in result["events"]:
                         serialized.append({
                             "day": ev["day"],
-                            "from": ev["from"],
-                            "to": ev["to"],
+                            "from": display(ev["from"]),
+                            "to": display(ev["to"]),
                             "original": ev["original"][:120],
                             "transformed": ev["transformed"][:120],
                             "importance_before": ev["importance_before"],
@@ -243,12 +278,12 @@ def create_app() -> FastAPI:
                         "memory_counts": engine.memory_counts(),
                     }
                     if conv is not None:
-                        payload["npc_a"] = conv.get("npc_a", "")
-                        payload["npc_b"] = conv.get("npc_b", "")
+                        payload["npc_a"] = display(conv.get("npc_a", ""))
+                        payload["npc_b"] = display(conv.get("npc_b", ""))
                         payload["topic"] = (conv.get("topic", "") or "")[:120]
                         payload["turns"] = [
                             {
-                                "speaker": t["speaker"],
+                                "speaker": display(t["speaker"]),
                                 "speaker_ko": t.get("speaker_ko", t["speaker"]),
                                 "text": t["text"][:200],
                             }
@@ -279,6 +314,8 @@ def create_app() -> FastAPI:
                 if len(history) > HISTORY_TURNS * 2:
                     history = history[-HISTORY_TURNS * 2:]
 
+                # 응답 NPC 이름 capitalize (Hermann 등)
+                result = add_display_npc(result)
                 await ws.send_json({"type": "response", **result})
 
         except WebSocketDisconnect:

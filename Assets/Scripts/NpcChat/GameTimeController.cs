@@ -21,7 +21,7 @@ namespace NpcChat
         [Header("서버")]
         public string serverHost = "127.0.0.1";
         public int serverPort = 8000;
-        public int numTurns = 2;
+        public int numTurns = 1;  // 각 NPC 발화 1회 (총 2 발화)
         public bool npcConversation = true;
 
         [Header("입력")]

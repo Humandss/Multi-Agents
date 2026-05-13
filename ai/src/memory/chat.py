@@ -45,11 +45,15 @@ def build_user_prompt(retrieved, user_text):
         if text.startswith("플레이어가 말했다:"):
             content = text[len("플레이어가 말했다:"):].strip()
             parts.append(f"전에 듣기로 {content}")
+        elif "와 대화:" in text or "한테 들었다:" in text:
+            # NPC-NPC 대화나 propagation 메모리는 너무 길게 끌고 들어오지 않도록 단축
+            parts.append(text[:80])
         else:
             parts.append(text)
 
     facts = "; ".join(parts)
-    return f"(떠올려보니 — {facts}) {user_text}"
+    # 명확히 구조화: 회상 따로 + 질문 따로. LLM이 회상에 끌려가지 않고 질문에 집중하도록.
+    return f"[참고 기억: {facts}]\n질문: {user_text}"
 
 
 class NpcChat:

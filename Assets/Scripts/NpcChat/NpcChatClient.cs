@@ -24,7 +24,27 @@ namespace NpcChat
         private WebSocket _ws;
         public bool IsOpen => _ws != null && _ws.State == WebSocketState.Open;
 
-        public NpcChatClient(string npc) { Npc = npc; }
+        public NpcChatClient(string npc) { Npc = NormalizeNpcName(npc); }
+
+        /// <summary>
+        /// 서버 등록 이름은 소문자 영문(elias/hermann/mathilda/finn/bernhardt).
+        /// 한글이나 대소문자 혼합으로 들어와도 자동 변환.
+        /// </summary>
+        public static string NormalizeNpcName(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return raw;
+            string s = raw.Trim();
+            // 한글 이름 매핑
+            switch (s)
+            {
+                case "엘리아스": return "elias";
+                case "헤르만":   return "hermann";
+                case "마틸다":   return "mathilda";
+                case "핀":       return "finn";
+                case "베른하르트": return "bernhardt";
+            }
+            return s.ToLowerInvariant();
+        }
 
         public async Task ConnectAsync()
         {
