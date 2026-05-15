@@ -77,3 +77,48 @@ class MemoryStore:
             embedding_function=self.embedder,
             metadata={"hnsw:space": "cosine"},
         )
+
+    def prune(self, max_keep: int = 60, preserve_sources: tuple = ("seed",)) -> int:
+        """메모리 수가 max_keep 초과 시 importance 낮고 오래된 것부터 삭제.
+
+        - preserve_sources: 항상 보존할 source (기본 'seed')
+        - 반환: 삭제된 메모리 수
+        """
+        if self.collection.count() <= max_keep:
+            return 0
+
+        all_data = self.all()
+        ids = all_data["ids"]
+        docs = all_data["documents"]
+        metas = all_data["metadatas"]
+
+        # (id, importance, timestamp, source) 튜플로 정렬용 데이터
+        entries = []
+        for i, mid in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            src = meta.get("source", "observation")
+            imp = int(meta.get("importance", 5))
+            ts = meta.get("timestamp", "")
+            entries.append({
+                "id": mid,
+                "importance": imp,
+                "timestamp": ts,
+                "source": src,
+            })
+
+        # 보존: preserve_sources에 해당하는 것은 항상 보존
+        preserved = [e for e in entries if e["source"] in preserve_sources]
+        prunable = [e for e in entries if e["source"] not in preserve_sources]
+
+        # prunable 정렬: importance 낮고 오래된 것 우선 삭제
+        prunable.sort(key=lambda x: (x["importance"], x["timestamp"]))
+
+        # max_keep 안에 들어가도록 prunable 일부만 keep
+        budget = max(0, max_keep - len(preserved))
+        # 마지막 budget개 (importance 높은) 보존, 나머지 삭제
+        if len(prunable) > budget:
+            to_delete = [e["id"] for e in prunable[:len(prunable) - budget]]
+            if to_delete:
+                self.collection.delete(ids=to_delete)
+                return len(to_delete)
+        return 0

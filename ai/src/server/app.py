@@ -125,13 +125,30 @@ def create_app() -> FastAPI:
         })
 
     @app.post("/quest_complete/{npc}")
-    def quest_complete(npc: str):
-        """Quest 완수 시 호출 — 해당 NPC 신뢰도 +10."""
+    def quest_complete(npc: str, quest_id: str | None = None):
+        """Quest 완수 시 호출 — 해당 NPC 신뢰도 +10. quest_id 옵션."""
         try:
-            result = engine.complete_quest(normalize(npc))
+            result = engine.complete_quest(normalize(npc), quest_id=quest_id)
             return JSONResponse(add_display_npc(result))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/quests")
+    def list_quests():
+        """전체 quest pool + 현재 상태 (디버그/시연용)."""
+        from .engine import NPC_QUEST_POOL
+        result = {}
+        for npc, pool in NPC_QUEST_POOL.items():
+            result[display(npc)] = [
+                {
+                    "id": q["id"],
+                    "title": q["title"],
+                    "trust_required": q.get("trust_required", 0),
+                    "status": engine.quests.status(q["id"]),
+                }
+                for q in pool
+            ]
+        return JSONResponse(result)
 
     def _decorate_conversation(result: dict) -> dict:
         """simulate_conversation 결과의 NPC 이름들을 표시용으로."""
@@ -234,6 +251,23 @@ def create_app() -> FastAPI:
 
         await ws.accept()
         await ws.send_json({"type": "ready", "npc": display(npc_name)})
+
+        # NPC opener 자동 송신 — 조건 충족 quest 있으면 quest intro, 없으면 greeting.
+        opener = engine.get_dialogue_opener(npc_name)
+        opener_text = opener.get("text", "")
+        opener_quest = opener.get("quest")
+        if opener_text:
+            await ws.send_json({
+                "type": "response",
+                "npc": display(npc_name),
+                "text": opener_text,
+                "latency_ms": 0,
+                "memories_used": [],
+                "quest": opener_quest,
+                "trust": engine.trust.get(npc_name),
+                "trust_label": engine.trust.label(npc_name),
+                "trust_delta": 0,
+            })
 
         history: list[dict] = []
 

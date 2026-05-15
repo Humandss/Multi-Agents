@@ -41,17 +41,71 @@ namespace NpcChat
         private float _pitch = 0f;  // 카메라 누적 X 회전
         private bool _canJump = true;  // 공중에선 false, 착지하면 true
 
+        // Spawn 위치/회전 — Start 시점에 저장. 시간 진행 시 복귀.
+        private Vector3 _spawnPos;
+        private Quaternion _spawnRot;
+
         void Awake()
         {
             _rb = GetComponent<Rigidbody>();
             // 모든 회전 freeze — 마우스로만 직접 회전 (충돌/물리 영향 차단)
             _rb.constraints = RigidbodyConstraints.FreezeRotation;
+
+            // 한글 IME 모드 비활성 — 알파벳 키(WASD, F)가 자모로 변환되지 않도록.
+            // (Windows 한글 사용자가 한/영 토글 안 해도 게임 키 정상 작동)
+            Input.imeCompositionMode = IMECompositionMode.Off;
         }
 
         void Start()
         {
             if (lockCursorOnStart)
                 LockCursor(true);
+
+            // Spawn 위치 저장 — 시간 진행(tick) 시 복귀용
+            _spawnPos = transform.position;
+            _spawnRot = transform.rotation;
+
+            // 시간 진행 시작 시 spawn으로 복귀 + 입력 잠금. 완료/실패 시 잠금 해제.
+            if (GameTimeController.Instance != null)
+            {
+                GameTimeController.Instance.OnTickStarted += HandleTickStarted;
+                GameTimeController.Instance.OnTickCompleted += HandleTickCompleted;
+                GameTimeController.Instance.OnTickFailed += HandleTickFailed;
+            }
+        }
+
+        void OnDestroy()
+        {
+            if (GameTimeController.Instance != null)
+            {
+                GameTimeController.Instance.OnTickStarted -= HandleTickStarted;
+                GameTimeController.Instance.OnTickCompleted -= HandleTickCompleted;
+                GameTimeController.Instance.OnTickFailed -= HandleTickFailed;
+            }
+        }
+
+        void HandleTickStarted()
+        {
+            ReturnToSpawn();
+            inputLocked = true;
+        }
+
+        void HandleTickCompleted(ServerMessage msg) { inputLocked = false; }
+        void HandleTickFailed(string err) { inputLocked = false; }
+
+        public void ReturnToSpawn()
+        {
+            transform.position = _spawnPos;
+            transform.rotation = _spawnRot;
+            if (_rb != null)
+            {
+                _rb.velocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+            }
+            _pitch = 0f;
+            if (cameraTransform != null)
+                cameraTransform.localRotation = Quaternion.identity;
+            _moveDirection = Vector3.zero;
         }
 
         void Update()
@@ -86,9 +140,12 @@ namespace NpcChat
                 }
             }
 
-            // 입력 (플레이어 forward/right 기준 — 마우스로 회전한 방향)
-            float h = Input.GetAxisRaw("Horizontal");  // A/D
-            float v = Input.GetAxisRaw("Vertical");    // W/S
+            // 입력 — Input.GetKey 직접 (InputField focus 영향 안 받음)
+            float h = 0f, v = 0f;
+            if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow))    v += 1f;
+            if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow))  v -= 1f;
+            if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow))  h -= 1f;
+            if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) h += 1f;
             Vector3 input = (transform.forward * v + transform.right * h);
             if (input.sqrMagnitude > 1f) input.Normalize();
             _moveDirection = input;

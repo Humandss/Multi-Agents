@@ -1,0 +1,36 @@
+{"npc": "mathilda", "baseline": "prompting", "prompt": "안녕하세요", "response": "어머~ 안녕하세요! 환영합니다, 우리 손님님. 뭘 드시고 싶으신가요? 맛있는 차 한 잔이나 따뜻한 스튜는 어떨까요? 편안하게 들어와 쉬시죠. 무엇을 도와드릴까요? 😊", "score": 5, "raw": "5"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "처음 뵙겠습니다", "response": "어머~ 환영합니다! 들어오셔서 편안한 자리에 앉으셔요. 뭘 드릴까요? 맛있는 차 한 잔이나 따뜻한 스튜가 어떨까요? 우리 술집에서 편안함을 느껴보시죠. 😊", "score": 5, "raw": "5"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "오늘 날씨 어때요?", "response": "어머~ 오늘 날씨 참 좋네요! 햇살이 따스해서 우리 마을 곳곳에 활기가 넘치더라고요. 들어오셔서 따뜻한 차 한 잔 하시면서 더 자세히 이야기 나누실래요? 맛있는 스튜도 준비해뒀어요. 😊", "score": 5, "raw": "5"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "요즘 어떻게 지내세요?", "response": "어머~ 요즘은 정말 괜찮아요! 손님들이 하나 둘씩 찾아오면서 우리 술집도 활기차네요. 맛있는 차 한 잔 하시러 들어오실래요? 편안한 분위기에서 이야기 나누기 딱 좋답니다. 어떤 걸로 드릴까요?", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "마을에 무슨 일 있어요?", "response": "어머~ 마을이야 늘 그렇듯 평온하지만요! 오늘 저녁엔 특별한 축제 준비 중이라네요. 맛있는 음식과 즐거운 음악이 가득할 거예요. 우리 모두 모여 즐기면 좋겠죠? 들어와서 함께 분위기 만끽해요~!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "용 사냥꾼 얘기 들으셨어요?", "response": "어머~ 용 사냥꾼이라니요! 듣긴 했는데, 자세한 이야기 들려주시겠어요? 우리 술집에 앉아서 편안하게 얘기 나누면 어떨까요? 맛있는 스튜 한 그릇 곁들이며 들어드릴게요. 들어오셔서 자세히 말씀해 주세요!", "score": 5, "raw": "5"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "검 한 자루 사고 싶어요", "response": "어머~ 검이라니요? 우리 술집 근처에 좋은 무기 상인 아저씨가 계신데, 거기 가면 원하시는 검을 찾으실 수 있을지도 몰라요! 들어가셔서 한번 구경해 보시죠? 맛있는 음료도 준비되어 있으니 편하게 둘러보셔도 좋아요~!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "약초 좀 주세요", "response": "어머~ 약초라니요? 우리 가게에는 다양한 약재들이 있어요! 어떤 용도로 쓰실 건가요? 혹시 특정 증상이나 필요로 하시는 종류가 있으신가요? 그럼 더 잘 맞춰드릴 수 있을 것 같아요. 들어오셔서 자세히 말씀해 주시겠어요? 맛있는 차 한 잔하시면서 이야기 나누셔도 좋답니다!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "아저씨 외로워 보여요", "response": "어머~ 그렇다니요? 하지만 이곳에 오시면 친구들도 많이 만나고 즐거운 이야기꽃도 피울 수 있어요! 우리 같이 따뜻한 차 한 잔 하며 이야기 나눠볼까요? 들어오셔서 편안함을 느껴보셔요~", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "고마워요", "response": "어머요! 언제든지 도움 필요하시면 말씀해요. 우리 술집에는 맛있는 차도 있고 편안한 분위기도 가득하니, 들어오셔서 쉬어가셔도 좋아요. 감사의 마음, 잊지 않을게요! 😊", "score": 5, "raw": "5"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "어떻게 그렇게 됐어요?", "response": "어머~ 그 이야기 좀 더 자세히 해줄래? 우리 모두 각자의 특별한 여정을 가지고 있잖아. 무슨 일이었는지 알려주면, 다른 손님들도 흥미로워할 것 같아요! 들어오셔서 편하게 이야기 나누자구.~", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "prompting", "prompt": "그래서 어떻게 됐어요?", "response": "어머~ 무슨 일인지 자세히 말씀해 주시겠어요? 이렇게 물어보니까 조금 혼란스러운데요... 우리 술집에 들어오셔서 편하게 이야기 나눠봐요. 어떤 소식을 궁금해하시는지 알려주시면 더 잘 도와드릴 수 있을 것 같아요!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "안녕하세요", "response": "어머, 새로운 얼굴이네요! 어디서 오셨어요?", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "처음 뵙겠습니다", "response": "어머, 새 손님이시네요! 자리 잡으셔도 돼요?", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "오늘 날씨 어때요?", "response": "흐음... 좀 덥네요! 맥주는 시원한 걸로 준비할게요, 손님.~", "score": 3, "raw": "3"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "요즘 어떻게 지내세요?", "response": "어머, 정말 잘 지내요! 새 책 들어왔어요~ 한 번 보러 오세요?!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "마을에 무슨 일 있어요?", "response": "음... 베른하르트가 새 책 주문했대요! 또 한 권 받으셨나 봐요, 호호. 그리고 헤르만 아저씨는 여전히 빵 굽느라 바쁘시답니다.!", "score": 3, "raw": "3"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "용 사냥꾼 얘기 들으셨어요?", "response": "아유, 그 모험가! 헤르만 아저씨랑 같이 떠난답니다... 잘 돌아오길 바라요.!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "검 한 자루 사고 싶어요", "response": "그럼요! 우리 가게에서 가장 좋은 검이라면서? 5골드예요, 현금이면 할인해드릴게요~!", "score": 3, "raw": "3"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "약초 좀 주세요", "response": "어머, 약초요? 헤르만 아저씨한테 가세요! 그분이 최고예요.~", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "아저씨 외로워 보여요", "response": "아유... 괜찮아요, 다들 그렇잖아요! 여기 앉으세요?", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "고마워요", "response": "아유~ 마음 따뜻해지네! 자주 오면 좋겠다, 정말.", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "어떻게 그렇게 됐어요?", "response": "어머, 갑자기 질문이시네요! 수학 문제 푸는 거 보고 깜짝 놀랐거든요 ~", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "lora", "prompt": "그래서 어떻게 됐어요?", "response": "어머, 그래서요?! 궁금해요! 자세히 얘기해주실래요??", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "full", "prompt": "안녕하세요", "response": "어머, 안녕하셨어요! 뭐든 도와드릴까요?", "score": 5, "raw": "5"}
+{"npc": "mathilda", "baseline": "full", "prompt": "처음 뵙겠습니다", "response": "어머, 첫 만남이라니 정말 신기하다! 검을 손에 들다니 참 흥미롭네.", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "full", "prompt": "오늘 날씨 어때요?", "response": "음... 좀 따뜻해요! 봄이 오는 거 보면요—> 작은 미소와 함께 말했습니다, 오늘의 태양처럼 따뜻하다네요~!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "full", "prompt": "요즘 어떻게 지내세요?", "response": "어머~ 잘 지내요! 새 책 들어왔어요 보러 오세요~!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "full", "prompt": "마을에 무슨 일 있어요?", "response": "음~ 웃지만 뒤에는 슬픔이라니요, 우리도 비슷해요! 작은 변화에도 주의를 기울이셔야겠네요.\"", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "full", "prompt": "용 사냥꾼 얘기 들으셨어요?", "response": "아유, 핀이 그러더라구! 용 잡는 것두 영웅이랬어. 근데 진정한 영웅은 일상생활 속에 있다는 거겠지?!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "full", "prompt": "검 한 자루 사고 싶어요", "response": "그검이 정말 중요한가봐요? 그럼 내일 다시 오셔도 돼요! 일단 차 한잔 하시면서 생각해보는 게 어떨까요?\"", "score": 3, "raw": "3"}
+{"npc": "mathilda", "baseline": "full", "prompt": "약초 좀 주세요", "response": "아유, 마을마다 독특해요! 특히 ~에서 정말 좋다고 하더라구요— 헤르만 아저씨가 추천하시더라고요.: 작지만 중요하고 다양합니다...", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "full", "prompt": "아저씨 외로워 보여요", "response": "아유... 그런 분위기네요, 핀의 말대로요? 조용히 흐르지만 슬픈 공기가 느껴져요!", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "full", "prompt": "고마워요", "response": "아유~ 마음 따뜻하시네요! 또 오셔도 좋아요, 손님이라면요~!", "score": 4, "raw": "4"}
+{"npc": "mathilda", "baseline": "full", "prompt": "어떻게 그렇게 됐어요?", "response": "엘리아스가 그 이야기를 했어요... 음, 주로 욕심 때문인 것 같아요!", "score": 2, "raw": "2"}
+{"npc": "mathilda", "baseline": "full", "prompt": "그래서 어떻게 됐어요?", "response": "흠... 그 일 이후에요, 음! 거의 정상으로 돌아왔지만 가끔 그때 생각해요—엘리아스도 그러더라구요. 모든 게 돈 때문인 것처럼 보이기도 하고 말아요?!", "score": 2, "raw": "2"}

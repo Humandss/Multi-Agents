@@ -97,8 +97,7 @@ def _cut_to_last_sentence(text: str) -> str:
     """마지막 완전한 문장 종결까지만 유지. max_new_tokens 한계로 잘린 끝 부분 제거.
 
     예: "어서 오시지요. 무엇을 찾으십..." → "어서 오시지요."
-    예: "권장드립니다지만, 일반적으로 검류는 헤르만에게 문의하시길 권하노" → "권장드립니다지만, 일반적으로 검류는 헤르만에게 문의하시길"
-        (이 경우 마침표 없으면 그대로 — 추가 처리 필요할 수 있음)
+    예: "흠, 안녕하시오. 환영하나이다 오시" → "흠, 안녕하시오. 환영하오."
     """
     text = text.rstrip()
     if not text:
@@ -156,9 +155,59 @@ def _fix_korean_particles(text: str) -> str:
 # 모델이 system prompt 어미 명령 무시할 때 강제 변환 (LLM 응답 잘 따라가지 않는 패턴).
 _NPC_POSTFIX = {
     "elias": [
+        # 응답 시작 어색 감탄사 정리 ("아호", "아하" 등 → "흠")
+        (re.compile(r"^(아호|아하|어허|오호|에헴)([\s,]+)"), r"흠\2"),
+        # "~겠습니까?" / "~시겠습니까?" → "~겠소?" / "~시겠소?"
+        (re.compile(r"([가-힣])시겠습니까\?"), lambda m: m.group(1) + "시겠소?"),
+        (re.compile(r"([가-힣])시겠습니까\b"), lambda m: m.group(1) + "시겠소"),
+        (re.compile(r"겠습니까\?"), "겠소?"),
+        (re.compile(r"겠습니까\b"), "겠소"),
+        # "~나니" / "~으나니" → "~오" (Elias 어미 leak)
+        (re.compile(r"([가-힣])으나니\b"), lambda m: m.group(1) + "오"),
+        (re.compile(r"([가-힣])나니\b"), lambda m: m.group(1) + "오"),
+        (re.compile(r"([가-힣])나니\.\.\.?"), lambda m: m.group(1) + "오..."),
+        # 어색한 사극체 변형 정리 (LLM이 다양한 사극체 시도하다 실패하는 케이스)
+        (re.compile(r"하나이다\b"), "하오"),
+        (re.compile(r"이나이다\b"), "이오"),
+        (re.compile(r"([가-힣])나이다\b"), lambda m: m.group(1) + "오"),
+        (re.compile(r"십시오\?"), "시오?"),
+        (re.compile(r"십시오\b"), "시오"),
+        (re.compile(r"겠소이다\b"), "겠소"),
+        (re.compile(r"겠소다\b"), "겠소"),
+        # "~소다" / "~소이다" → "~소"
+        (re.compile(r"([가-힣])소이다\b"), lambda m: m.group(1) + "소"),
+        (re.compile(r"([가-힣])소다\b"), lambda m: m.group(1) + "소"),
+        # "~다오" / "~이다오" → "~오" / "~이오"
+        (re.compile(r"있다오\b"), "있소"),
+        (re.compile(r"없다오\b"), "없소"),
+        (re.compile(r"이다오\b"), "이오"),
+        (re.compile(r"([가-힣])다오\b"), lambda m: m.group(1) + "오"),
+        # "~으니이다" / "~니이다" → "~소" / "~오"
+        (re.compile(r"있으니이다\b"), "있소"),
+        (re.compile(r"없으니이다\b"), "없소"),
+        (re.compile(r"([가-힣])으니이다\b"), lambda m: m.group(1) + "소"),
+        (re.compile(r"([가-힣])니이다\b"), lambda m: m.group(1) + "오"),
+        # "~오리다" / "~으리다" → "~오"
+        (re.compile(r"하오리다\b"), "하오"),
+        (re.compile(r"([가-힣])오리다\b"), lambda m: m.group(1) + "오"),
+        (re.compile(r"([가-힣])으리다\b"), lambda m: m.group(1) + "오"),
+        # "~이라오" → "~이오"
+        (re.compile(r"이라오\b"), "이오"),
+        # "환영하나이다 오시" 같은 잘림 — "오시" 단독 등장 시 제거
+        (re.compile(r"\s+오시(?=[\s.,!?]|$)"), ""),
         # "~십니까?" → "~시오?" (사극체 학자 어조 강제)
         (re.compile(r"([가-힣])십니까\?"), lambda m: m.group(1) + "시오?"),
         (re.compile(r"([가-힣])십니까\b"), lambda m: m.group(1) + "시오"),
+        # "~나요?" / "~가요?" → "~오?"
+        (re.compile(r"([가-힣])(시|으시)?나요\?"), lambda m: m.group(1) + "시오?" if m.group(2) else m.group(1) + "오?"),
+        (re.compile(r"([가-힣])(시|으시)?가요\?"), lambda m: m.group(1) + "시오?" if m.group(2) else m.group(1) + "오?"),
+        # "~다마저도" 같은 어색 어미
+        (re.compile(r"다마저도\b"), "오"),
+        (re.compile(r"마저도\b"), ""),
+        # "~세요" 명령형 → "~시오"
+        (re.compile(r"([가-힣])세요\b"), lambda m: m.group(1) + "시오"),
+        # "~내세요" / "~해주세요" → "~내시오" / "~해주시오"
+        (re.compile(r"([가-힣])주세요\b"), lambda m: m.group(1) + "주시오"),
         # "~합니다" → "~하오"
         (re.compile(r"합니다\b"), "하오"),
         (re.compile(r"됩니다\b"), "되오"),
@@ -175,6 +224,13 @@ _NPC_POSTFIX = {
         (re.compile(r"([가-힣])시지요\b"), lambda m: m.group(1) + "시오"),
         # "~시리오" → "~시오"
         (re.compile(r"([가-힣])시리오\b"), lambda m: m.group(1) + "시오"),
+        # "~시군요" / "~시는군요" → "~시오" (인지·감탄 어미 → 학자 어조)
+        (re.compile(r"안녕하시군요"), "안녕하시오"),
+        (re.compile(r"([가-힣])시는군요\b"), lambda m: m.group(1) + "시는구려"),
+        (re.compile(r"([가-힣])시군요\b"), lambda m: m.group(1) + "시구려"),
+        # 일반 "~군요" → "~구려" (예: "그렇군요" → "그렇구려")
+        (re.compile(r"([가-힣])군요\b"), lambda m: m.group(1) + "구려"),
+        (re.compile(r"([가-힣])네요\b"), lambda m: m.group(1) + "구려"),
         # "~죠?" → "~오?"
         (re.compile(r"죠\?"), "오?"),
         (re.compile(r"죠\."), "오."),
@@ -196,6 +252,11 @@ _NPC_POSTFIX = {
         # "~죠" → "~노라"
         (re.compile(r"하죠\b"), "하노라"),
         (re.compile(r"있죠\b"), "있노라"),
+        # quest description 명령형 → 시적 권유
+        (re.compile(r"([가-힣])해주세요\b"), lambda m: m.group(1) + "해주오"),
+        (re.compile(r"([가-힣])주세요\b"), lambda m: m.group(1) + "주오"),
+        (re.compile(r"([가-힣])세요\b"), lambda m: m.group(1) + "시오"),
+        (re.compile(r"([가-힣])요\b"), lambda m: m.group(1) + "오"),
     ],
     "mathilda": [
         # mathilda는 "~네요/~죠/~어요" 자연. "~십니까" 어색 → "~세요"
@@ -206,9 +267,25 @@ _NPC_POSTFIX = {
         (re.compile(r"입니다\b"), "이에요"),
         (re.compile(r"있습니다\b"), "있어요"),
         (re.compile(r"없습니다\b"), "없어요"),
+        # 사극체 leak → 친근 어조
+        (re.compile(r"([가-힣])하오\b"), lambda m: m.group(1) + "해요"),
+        (re.compile(r"([가-힣])시오\b"), lambda m: m.group(1) + "세요"),
+        (re.compile(r"([가-힣])이오\b"), lambda m: m.group(1) + "이에요"),
+        (re.compile(r"([가-힣])구려\b"), lambda m: m.group(1) + "네요"),
     ],
     "hermann": [
         # hermann은 반말. 존댓말 leak 시 반말로 강제.
+        # 1) 흔한 정중 표현 → 반말
+        (re.compile(r"아니요\b"), "아니"),
+        (re.compile(r"아니에요\b"), "아니"),
+        (re.compile(r"그래요\b"), "그래"),
+        (re.compile(r"맞아요\b"), "맞아"),
+        (re.compile(r"글쎄요\b"), "글쎄"),
+        (re.compile(r"고마워요\b"), "고맙다"),
+        (re.compile(r"감사해요\b"), "고맙다"),
+        (re.compile(r"미안해요\b"), "미안"),
+        (re.compile(r"괜찮아요\b"), "괜찮아"),
+        # 2) 합니다/입니다 류
         (re.compile(r"하세요\b"), "해"),
         (re.compile(r"드릴게요\b"), "줄게"),
         (re.compile(r"드립니다\b"), "준다"),
@@ -217,15 +294,69 @@ _NPC_POSTFIX = {
         (re.compile(r"합니다\b"), "해"),
         (re.compile(r"입니다\b"), "이야"),
         (re.compile(r"됩니다\b"), "돼"),
+        # 3) 추천/권장 류 - hermann은 무뚝뚝하게 거절
+        (re.compile(r"권장할게요?\b"), "가봐"),
+        (re.compile(r"권장합니다\b"), "가봐"),
+        (re.compile(r"권장해\b"), "가봐"),
+        (re.compile(r"추천드립니다\b"), "추천한다"),
+        (re.compile(r"추천드려요?\b"), "추천한다"),
         (re.compile(r"([가-힣])십니까\?"), lambda m: m.group(1) + "냐?"),
         (re.compile(r"(이|있|없)어요\b"), lambda m: m.group(1) + "어"),
-        (re.compile(r"([가-힣])세요\b"), lambda m: m.group(1) + "해"),
+        # quest description 명령형 → 반말 (순서 중요: 긴 패턴 먼저)
+        (re.compile(r"([가-힣])해주세요\b"), lambda m: m.group(1) + "해줘"),
+        (re.compile(r"([가-힣])아주세요\b"), lambda m: m.group(1) + "아줘"),
+        (re.compile(r"([가-힣])어주세요\b"), lambda m: m.group(1) + "어줘"),
+        (re.compile(r"주세요\b"), "줘"),
+        (re.compile(r"([가-힣])보세요\b"), lambda m: m.group(1) + "봐"),
+        (re.compile(r"([가-힣])하세요\b"), lambda m: m.group(1) + "해"),
+        # 일반 "~세요" → "~라" (밝혀내세요 → 밝혀내라)
+        (re.compile(r"([가-힣])세요\b"), lambda m: m.group(1) + "라"),
+        (re.compile(r"([가-힣])하시오\b"), lambda m: m.group(1) + "해"),
+        (re.compile(r"([가-힣])시오\b"), lambda m: m.group(1) + "라"),
     ],
     "bernhardt": [
         # bernhardt는 "~지요/~습니다" 자연. 일부 패턴만.
         # "~죠" → "~지요" (더 정중하게)
         (re.compile(r"하죠\b"), "하지요"),
         (re.compile(r"있죠\b"), "있지요"),
+        # "~십시오죠" / "~시오죠" 같은 어색한 어미 중복 정리
+        (re.compile(r"십시오죠\b"), "십시오"),
+        (re.compile(r"십시오\.죠"), "십시오."),
+        (re.compile(r"시지요죠\b"), "시지요"),
+        (re.compile(r"([가-힣])오죠\b"), lambda m: m.group(1) + "지요"),
+        # 일반 죠 → 지요 (단어 끝 자연스러운 부분만)
+        (re.compile(r"([가-힣])\s죠\b"), lambda m: m.group(1) + " 지요"),
+        # quest description 명령형 → 정중한 거래 어조
+        (re.compile(r"([가-힣])해주세요\b"), lambda m: m.group(1) + "해주시지요"),
+        (re.compile(r"([가-힣])아주세요\b"), lambda m: m.group(1) + "아주시지요"),
+        (re.compile(r"([가-힣])어주세요\b"), lambda m: m.group(1) + "어주시지요"),
+        (re.compile(r"주세요\b"), "주시지요"),
+        (re.compile(r"([가-힣])세요\b"), lambda m: m.group(1) + "시지요"),
+        # 사극체 leak → 현대 정중
+        (re.compile(r"([가-힣])하오\b"), lambda m: m.group(1) + "합니다"),
+        (re.compile(r"([가-힣])이오\b"), lambda m: m.group(1) + "입니다"),
+        # 과한 사극체 어미 정리
+        (re.compile(r"아니옵니다\b"), "아닙니다"),
+        (re.compile(r"이옵니다\b"), "입니다"),
+        (re.compile(r"하옵니다\b"), "합니다"),
+        (re.compile(r"되옵니다\b"), "됩니다"),
+        (re.compile(r"드리옵니다\b"), "드립니다"),
+        (re.compile(r"있사옵니다\b"), "있습니다"),
+        (re.compile(r"없사옵니다\b"), "없습니다"),
+        (re.compile(r"사옵니다\b"), "습니다"),
+        # "~마는" → "~만" (어색한 격식체 어미)
+        (re.compile(r"습니다마는\b"), "습니다만"),
+        (re.compile(r"입니다마는\b"), "입니다만"),
+        (re.compile(r"합니다마는\b"), "합니다만"),
+        (re.compile(r"니다마는\b"), "니다만"),
+        # "~으리라" / "~리라" → 현대 추정
+        (re.compile(r"있으리라\b"), "있을 것"),
+        (re.compile(r"없으리라\b"), "없을 것"),
+        (re.compile(r"되리라\b"), "될 것"),
+        (re.compile(r"하리라\b"), "할 것"),
+        # "~사오니" → "~하니" (사극체)
+        (re.compile(r"사오니\b"), "하니"),
+        (re.compile(r"오니까\b"), "으니까"),
     ],
 }
 
@@ -278,12 +409,14 @@ DEFAULT_CHARACTERS = ["elias", "hermann", "mathilda", "finn", "bernhardt"]
 NPC_STRICT_RULES = {
     "elias": (
         "직업: 마법사·학자. 마법·학문·검증 질문만 답하시오.\n"
-        "차분한 학자 어조, 약간 회의적. 어미는 ~오 ~이오 ~구려 위주. "
-        "절대 금지: ~니다 ~습니다 ~소이옵니다 ~옵소서 같은 과한 사극체.\n"
-        "한 문장으로 답하시오. 흠 으로 시작 자주.\n"
+        "차분한 학자 어조, 약간 회의적. **어미는 오직 ~오 / ~이오 / ~구려 3가지만**. "
+        "다른 사극체(~나이다 ~소이다 ~옵소서 ~십시오 ~군요 ~네요) 절대 사용 금지. "
+        "현대체(~니다 ~습니다) 절대 사용 금지.\n"
+        "한 문장만. 흠 으로 시작 자주.\n"
         "예: 안녕하세요 -> 흠, 무슨 일이오?\n"
         "예: 마법 어디서 배웠어요 -> 옛 도시에서 50년 익혔구려.\n"
-        "예: 광산은 안전한가요 -> 흠... 그 일이 마음에 걸리오."
+        "예: 광산은? -> 흠... 그 일이 마음에 걸리오.\n"
+        "예: 환영해주세요 -> 어서 오시오, 무엇이 궁금하오?"
     ),
     "hermann": (
         "직업: 대장장이. 검·쇠·도구 거래만. 약초·음식은 다른 NPC로 보내시오.\n"
@@ -334,13 +467,268 @@ GEN_PARAMS = {
     "bernhardt": {"temperature": 0.40, "max_new_tokens": 55, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4},
 }
 
+# NPC별 Quest Pool — 미리 정의된 quest. 조건(trust 등) 충족 시 NPC가 먼저 제안.
+# id는 unique. trust_required: 이 trust 이상이어야 quest 제안.
+# intro: NPC가 quest를 줄 때 첫 대사 (greeting 대체).
+NPC_QUEST_POOL = {
+    "elias": [
+        {
+            "id": "elias_mine_secret",
+            "title": "광산 봉인의 진실",
+            "description": "100년 전 봉인된 광산 입구를 조사해 그 비극의 흔적을 확인해주시오.",
+            "reward": "고대 마법 지식",
+            "trust_required": 40,
+            "intro": "모험가 양반, 마침 잘 오셨소. 자네에게 부탁할 일이 하나 있소.",
+        },
+        {
+            "id": "elias_old_text",
+            "title": "잃어버린 마법서 조각",
+            "description": "마을 어딘가에 흩어진 옛 마법서 조각을 모아 오시오.",
+            "reward": "마법 시약",
+            "trust_required": 60,
+            "intro": "흠, 자네에게만 털어놓는 이야기인데... 도움이 필요하오.",
+        },
+    ],
+    "hermann": [
+        {
+            "id": "hermann_meteor_ore",
+            "title": "운철 광석 채집",
+            "description": "산 너머 동굴에서 운철 광석을 캐 와라. 검 만드는 데 필요하다.",
+            "reward": "강철 단검",
+            "trust_required": 35,
+            "intro": "어이 모험가, 잠깐. 너 이거 좀 해줘.",
+        },
+        {
+            "id": "hermann_old_hammer",
+            "title": "잃어버린 망치",
+            "description": "할아버지 망치를 광산 근처에서 잃어버렸다. 찾아 와줘.",
+            "reward": "특제 강철 무기",
+            "trust_required": 65,
+            "intro": "야, 너한테만 말하는 건데. 부탁 하나 들어줄래?",
+        },
+    ],
+    "mathilda": [
+        {
+            "id": "mathilda_rumor_check",
+            "title": "이상한 그림자 소문",
+            "description": "밤마다 광장에 나타난다는 검은 그림자의 정체를 알아봐주세요.",
+            "reward": "특별 양조 술",
+            "trust_required": 35,
+            "intro": "어머나 모험가 분, 마침 잘 오셨네요. 부탁 하나 들어주실래요?",
+        },
+        {
+            "id": "mathilda_rare_herb",
+            "title": "희귀 약초 구매",
+            "description": "산 너머 가격이 올랐다는 희귀 약초를 구해 와주세요.",
+            "reward": "최고급 요리",
+            "trust_required": 55,
+            "intro": "아유, 우리 단골! 마침 부탁할 게 있어요.",
+        },
+    ],
+    "finn": [
+        {
+            "id": "finn_legend_verify",
+            "title": "전설의 검증",
+            "description": "용 사냥 영웅이 떠난 길을 따라가 그의 운명을 확인해주오.",
+            "reward": "음유시인의 노래 (경험치)",
+            "trust_required": 40,
+            "intro": "오 그대여, 운명이 그대를 이끌었나니. 부탁이 하나 있노라.",
+        },
+        {
+            "id": "finn_lost_song",
+            "title": "잊혀진 노래의 악보",
+            "description": "옛 도시에 묻혀있다는 전설의 악보를 찾아 와주오.",
+            "reward": "고대 마력의 결정",
+            "trust_required": 65,
+            "intro": "오 영웅이여, 그대에게만 부탁할 수 있는 일이 있노라.",
+        },
+    ],
+    "bernhardt": [
+        {
+            "id": "bernhardt_supply_run",
+            "title": "약초 보급",
+            "description": "산 너머 마을에서 약초를 사 와 주십시오. 거래 대금은 미리 드립니다.",
+            "reward": "금화 30닢",
+            "trust_required": 35,
+            "intro": "어서 오십시오. 마침 거래 제안 하나 드리지요.",
+        },
+        {
+            "id": "bernhardt_secret_item",
+            "title": "잡화상의 비밀 거래",
+            "description": "오래된 친구에게 보내는 물건을 옛 도시까지 전해주십시오.",
+            "reward": "희귀 잡화 + 금화",
+            "trust_required": 60,
+            "intro": "흠, 자네 같은 단골에게만 말씀드리는 거래가 하나 있지요.",
+        },
+    ],
+}
+
+
+class QuestTracker:
+    """NPC별 quest 상태 추적.
+
+    상태:
+      - available: 아직 제안 안 함 (trust 부족 또는 다른 quest 진행 중)
+      - offered:   제안됨, 플레이어가 수락하지 않은 상태
+      - completed: 완료
+    """
+    def __init__(self):
+        self._state: dict[str, str] = {}  # quest_id → status
+
+    def status(self, quest_id: str) -> str:
+        return self._state.get(quest_id, "available")
+
+    def mark_offered(self, quest_id: str):
+        self._state[quest_id] = "offered"
+
+    def mark_completed(self, quest_id: str):
+        self._state[quest_id] = "completed"
+
+    def get_active_quests(self, npc: str) -> list[dict]:
+        """NPC가 현재 제안 가능한 quest 목록 (available 상태)."""
+        pool = NPC_QUEST_POOL.get(npc, [])
+        return [q for q in pool if self.status(q["id"]) == "available"]
+
+    def get_pickable_quest(self, npc: str, current_trust: int) -> dict | None:
+        """현재 trust로 받을 수 있는 quest 1개 (가장 낮은 trust_required부터)."""
+        candidates = [
+            q for q in self.get_active_quests(npc)
+            if current_trust >= q.get("trust_required", 0)
+        ]
+        if not candidates:
+            return None
+        # trust_required 가장 낮은 quest 우선 (난이도 순서)
+        candidates.sort(key=lambda q: q.get("trust_required", 0))
+        return candidates[0]
+
+    def snapshot(self) -> dict:
+        return dict(self._state)
+
+
+# NPC별 첫 만남 greeting — F 키로 처음 대화 시작할 때 NPC가 먼저 한마디.
+# 신뢰도 4등급(낯선 사람/지인/친구/절친) × 3 바리에이션 = 다양성 보장.
+# LLM 호출 없이 즉시 표시 = 빠름.
+NPC_GREETINGS = {
+    "elias": {
+        "낯선 사람": [
+            "흠, 처음 보는 얼굴이오. 여기엔 무슨 일이오?",
+            "낯선 자가 내 공방을 찾았구려. 무슨 용건이오?",
+            "흠... 그대를 본 적이 없는 듯하오. 무엇이 궁금하시오?",
+        ],
+        "지인": [
+            "어서 오시오 모험가 양반. 무슨 일로 오셨소?",
+            "흠, 또 오셨구려. 오늘은 무엇이 궁금하시오?",
+            "어서 오시오. 마침 한가하던 참이오.",
+        ],
+        "친구": [
+            "오, 자네인가. 잘 오셨소.",
+            "반갑소이다 친구여. 무슨 이야기를 나눠볼까.",
+            "어서 오시오, 늘 환영하오.",
+        ],
+        "절친": [
+            "오, 자네 왔는가! 마침 자네 생각을 하던 참이오.",
+            "허허, 친애하는 벗이여. 무슨 좋은 소식이라도?",
+            "내 가장 신뢰하는 자가 왔구려. 어서 앉으시오.",
+        ],
+    },
+    "hermann": {
+        "낯선 사람": [
+            "어. 누구야 너.",
+            "음... 처음 보는데. 뭐 살 거 있어?",
+            "어. 모험가냐? 검 보러 왔어?",
+        ],
+        "지인": [
+            "어. 또 왔네. 뭐 필요해?",
+            "음, 너구나. 무슨 일이야.",
+            "어. 어서 와.",
+        ],
+        "친구": [
+            "오, 왔어? 마침 잘 됐다.",
+            "어이, 친구. 검 손볼 거 있냐?",
+            "어. 잘 왔다. 한 잔 할래?",
+        ],
+        "절친": [
+            "야, 보고 싶었다. 잘 지냈냐?",
+            "오! 내 절친 왔구나. 뭐 도와줄 거 있냐?",
+            "왔구나. 너 없으니 심심하더라.",
+        ],
+    },
+    "mathilda": {
+        "낯선 사람": [
+            "어머, 처음 뵙는 손님이네요? 어서 오세요!",
+            "어머나, 새 얼굴이네요! 차 한 잔 드릴까요?",
+            "어서 오세요, 손님! 처음이시죠?",
+        ],
+        "지인": [
+            "어머, 또 오셨네요! 반가워요.",
+            "어서 오세요~ 오늘은 뭘 드시러 오셨어요?",
+            "아유, 잘 오셨어요. 들어와 앉으세요.",
+        ],
+        "친구": [
+            "어머나, 우리 단골! 보고 싶었어요!",
+            "오, 친구 왔네! 자, 오늘은 특별히 맛있는 거 준비했어요.",
+            "어머 어서 와요, 자리 비워뒀어요.",
+        ],
+        "절친": [
+            "어머! 내 사랑하는 친구! 어서 와요, 빨리!",
+            "꺄, 보고 싶었어요! 오늘은 우리 둘이 수다 떨어요.",
+            "아유 정말, 왜 이렇게 오랜만이에요! 자, 앉아요.",
+        ],
+    },
+    "finn": {
+        "낯선 사람": [
+            "오, 낯선 그대여. 별빛이 새 운명을 이끌어왔구려.",
+            "그대의 이름은 들어본 적 없거늘, 어인 일로 이곳에?",
+            "처음 뵙는 분이로다. 그대의 이야기를 들려주오.",
+        ],
+        "지인": [
+            "오 그대여, 다시 만났구려. 무슨 노래를 들으러 오셨소?",
+            "다시 그대를 보니 반갑소이다. 어떤 이야기를 원하오?",
+            "오, 익숙한 발걸음이여. 어서 오시오.",
+        ],
+        "친구": [
+            "오 친애하는 벗이여, 그대를 위한 노래가 준비되어 있다오.",
+            "그대를 위해 새 시를 지었거늘, 들어보겠소?",
+            "오, 영웅이여. 그대의 모험담을 들려주오.",
+        ],
+        "절친": [
+            "오 나의 영원한 벗이여! 그대의 이야기가 전설로 남으리라.",
+            "그대 없는 마을은 노래 없는 술집 같았소이다.",
+            "어서 오시오 진정한 벗이여, 별빛이 그대를 환영하오.",
+        ],
+    },
+    "bernhardt": {
+        "낯선 사람": [
+            "어서 오시지요. 처음 뵙는 분 같은데, 뭘 찾으십니까?",
+            "흠, 새로운 손님이군요. 약초나 잡화 필요하시면 말씀하시지요.",
+            "어서 오십시오. 저희 가게가 처음이신가요?",
+        ],
+        "지인": [
+            "어서 오시지요. 오늘은 어떤 게 필요하십니까?",
+            "또 오셨군요, 반갑습니다. 무엇을 보여드릴까요?",
+            "흠, 어서 오시지요. 이번엔 무엇을 찾으십니까?",
+        ],
+        "친구": [
+            "오, 친구분 오셨군요. 특별 할인 가격으로 해드리지요.",
+            "어서 오시지요, 단골손님. 좋은 물건 들어왔습니다.",
+            "반갑습니다. 자주 찾아주시니 감사할 따름이지요.",
+        ],
+        "절친": [
+            "오, 가장 소중한 단골손님! 어서 오시지요.",
+            "흠, 그대 같은 분께는 무엇이든 최고 품질로 드리지요.",
+            "친애하는 벗이여, 어서 오시오. 오늘은 특별한 거래가 가능하지요.",
+        ],
+    },
+}
+
+
 # NPC별 Quest 안내 template — LLM 응답 뒤에 자연스럽게 이어붙임.
 # {title}/{description}/{reward}만 채우면 됨. 페르소나 어조 유지하므로 추가 LLM 호출 불필요 = 빠름.
 NPC_QUEST_INTRO = {
     "elias": (
-        " 흠... 한 가지 부탁이 있소이다. "
+        " 흠... 한 가지 부탁이 있소. "
         "「{title}」 — {description} "
-        "성공하면 {reward} 보답하리오."
+        "성공하면 {reward} 보답하오."
     ),
     "hermann": (
         " 너 모험가지? 한 건 도와줘봐. "
@@ -553,6 +941,7 @@ class NpcServer:
         self.day = 0
         self._transform_cache: dict = {}
         self.trust = TrustTracker()
+        self.quests = QuestTracker()
 
         # 페르소나 정의 로드 (system prompt에 사용)
         personas_path = Path(__file__).resolve().parents[2] / "data" / "eval" / "test_prompts.yaml"
@@ -626,10 +1015,10 @@ class NpcServer:
 
         t0 = time.time()
         if self.use_memory:
-            # 같은 NPC와 대화 중에는 자기가 들은 플레이어 발화(DIALOGUE)를 회상하지 않음.
-            # (전파를 거쳐 다른 NPC가 PROPAGATION으로 다시 받게 되면 그건 회상 가능)
+            # 플레이어 발화(DIALOGUE)도 회상 가능 — "내 이름은 ~" 같은 자기소개 기억.
+            # 직전 turn의 자기 메모리 회상은 retriever의 min_similarity로 자연스럽게 필터됨.
             retrieved = self.retrievers[npc].search(
-                user_text, k=self.retrieval_k, exclude_sources={"dialogue"}
+                user_text, k=self.retrieval_k
             )
             augmented = build_user_prompt(retrieved, user_text)
         else:
@@ -673,23 +1062,29 @@ class NpcServer:
         text = _clean_response(text, npc=npc)  # emoji/특수문자/NPC별 어미 정리
         latency_ms = int((time.time() - t0) * 1000)
 
-        # Quest 추출은 중요 회상이 있을 때만 (latency 절약)
-        # importance 7+: 시드 또는 propagation으로 강조된 사건만 quest 후보.
+        # ─────────────────────────────────────────────────────────
+        # LLM 자동 Quest 생성 — 일단 보류 (2026-05-13).
+        # 이유: NPC 응답 뒤에 quest template이 앞뒤 맥락 없이 갑자기 붙는 케이스가
+        #       많아 어색함. 향후 quest pool + LLM 선택 하이브리드 방식으로 전환 예정.
+        # 복원: 아래 주석 블록 해제 + quest=None 줄 제거.
+        # ─────────────────────────────────────────────────────────
         quest = None
-        high_imp = any(m["importance"] >= 7 for m in retrieved) if retrieved else False
-        if high_imp:
-            quest = self._extract_quest(npc, user_text, text, retrieved)
-            # Quest가 추출되면 NPC 페르소나 template으로 안내문 자동 첨부
-            # LLM 응답 (짧음) + Quest template (페르소나 어조) = 자연스럽고 빠름
-            if quest is not None:
-                template = NPC_QUEST_INTRO.get(npc)
-                if template:
-                    quest_intro = template.format(
-                        title=quest.get("title", ""),
-                        description=quest.get("description", ""),
-                        reward=quest.get("reward", "응당한") or "응당한",
-                    )
-                    text = text.rstrip() + quest_intro
+        # high_imp = any(m["importance"] >= 7 for m in retrieved) if retrieved else False
+        # if high_imp:
+        #     quest = self._extract_quest(npc, user_text, text, retrieved)
+        #     if quest is not None:
+        #         template = NPC_QUEST_INTRO.get(npc)
+        #         stripped = text.rstrip()
+        #         ends_with_question = stripped.endswith("?") or stripped.endswith("?")
+        #         too_short = len(stripped) < 12
+        #         if template and not ends_with_question and not too_short:
+        #             quest_intro = template.format(
+        #                 title=quest.get("title", ""),
+        #                 description=quest.get("description", ""),
+        #                 reward=quest.get("reward", "응당한") or "응당한",
+        #             )
+        #             text = text.rstrip() + quest_intro
+        #             text = _clean_response(text, npc=npc)
 
         # 플레이어 발화를 NPC의 DIALOGUE 메모리로 저장 (다음 tick에서 전파 후보)
         if self.use_memory:
@@ -716,17 +1111,73 @@ class NpcServer:
             "latency_ms": latency_ms,
         }
 
-    def complete_quest(self, npc: str) -> dict:
-        """Quest 완수 시 호출 — 신뢰도 +10."""
+    def complete_quest(self, npc: str, quest_id: str | None = None) -> dict:
+        """Quest 완수 시 호출 — 신뢰도 +10. quest_id 명시되면 상태 'completed'."""
         if npc not in self.characters:
             raise ValueError(f"알 수 없는 NPC: {npc}")
         delta = self.trust.on_quest_complete(npc)
+        if quest_id:
+            self.quests.mark_completed(quest_id)
         return {
             "npc": npc,
+            "quest_id": quest_id,
             "trust": self.trust.get(npc),
             "trust_label": self.trust.label(npc),
             "trust_delta": delta,
         }
+
+    def get_greeting(self, npc: str) -> str:
+        """현재 신뢰도에 맞는 NPC greeting 무작위 1개 반환.
+
+        LLM 호출 없이 즉시 — F키로 처음 대화 시작 시 NPC가 먼저 한마디.
+        """
+        if npc not in self.characters:
+            return ""
+        label = self.trust.label(npc)
+        greetings = NPC_GREETINGS.get(npc, {}).get(label, [])
+        if not greetings:
+            return ""
+        return random.choice(greetings)
+
+    def get_dialogue_opener(self, npc: str) -> dict:
+        """대화 시작 시 NPC가 먼저 말하는 첫 대사.
+
+        조건:
+        - 줄 수 있는 quest(trust 충족 + available) 있으면 → quest intro + quest 정보
+        - 없으면 → 일반 greeting
+        반환: {text: str, quest: dict | None}
+        """
+        if npc not in self.characters:
+            return {"text": "", "quest": None}
+
+        current_trust = self.trust.get(npc)
+        pickable = self.quests.get_pickable_quest(npc, current_trust)
+
+        if pickable is not None:
+            # Quest intro로 대화 시작 + quest 정보 표시
+            intro = pickable.get("intro", "")
+            template = NPC_QUEST_INTRO.get(npc, "「{title}」 — {description} 보상: {reward}.")
+            quest_body = template.format(
+                title=pickable.get("title", ""),
+                description=pickable.get("description", ""),
+                reward=pickable.get("reward", ""),
+            )
+            text = (intro + quest_body).strip()
+            # offered로 상태 변경 (한 번 보여주면 다시는 자동 제안 X)
+            self.quests.mark_offered(pickable["id"])
+            return {
+                "text": text,
+                "quest": {
+                    "id": pickable["id"],
+                    "title": pickable.get("title", ""),
+                    "description": pickable.get("description", ""),
+                    "reward": pickable.get("reward", ""),
+                    "giver": npc,
+                },
+            }
+
+        # Quest 없으면 일반 greeting
+        return {"text": self.get_greeting(npc), "quest": None}
 
     # ---------- NPC-NPC 자율 대화 (Park et al. 2023 스타일) ----------
     def _generate_for_npc(
@@ -790,7 +1241,13 @@ class NpcServer:
                 # importance 6+ memory 위주 검색
                 cand = self.retrievers[npc_a].search("마을 사건 소식", k=3)
                 if cand:
-                    topic = random.choice(cand)["text"]
+                    chosen = random.choice(cand)["text"]
+                    # 플레이어 발화는 출처 명시해서 topic 구성 — NPC가 자기 말로 오인 방지
+                    if chosen.startswith("플레이어가 말했다: "):
+                        content = chosen[len("플레이어가 말했다: "):][:80]
+                        topic = f"플레이어가 나한테 '{content}'라고 했던 일"
+                    else:
+                        topic = chosen
                 else:
                     topic = "마을 근황"
             except Exception:
@@ -981,27 +1438,34 @@ class NpcServer:
 
     def _save_player_turn(self, npc: str, user_text: str) -> None:
         text = user_text.strip()
-        if len(text) < 8:
-            return  # 인사·감탄사는 저장 X (전파 가치 없음)
+        if len(text) < 4:
+            return  # 너무 짧은 감탄사만 제외
 
-        # 질문문 vs 평서문 분기 — 질문은 fact가 아니므로 전파 후보에서 제외 (importance < threshold)
+        # 질문문 vs 평서문 분기
         is_question = "?" in text or any(
             text.endswith(suf) for suf in ["어요", "지요", "나요", "까", "야"]
         )
-        # 사실 보고 키워드: 있으면 전파 가치 ↑
-        fact_kw = ["나타났", "사라졌", "잡았", "봤", "들었", "있었", "갔다", "왔다", "했다", "됐다", "당했"]
+        # 사실 보고 키워드 (강한 fact 신호)
+        fact_kw = ["나타났", "사라졌", "잡았", "봤", "들었", "있었", "갔다", "왔다", "했다",
+                   "됐다", "당했", "보았", "만났", "들었어", "가봤", "도와", "받았"]
         has_fact = any(kw in text for kw in fact_kw)
+        # 자기소개/personal info: 이름·정체성 정보
+        personal_kw = ["내 이름", "제 이름", "이름은", "이라고 해", "이라고 한다",
+                       "라고 합니다", "라고 불러", "나는 ", "저는 ", "내가 ", "제가 "]
+        has_personal = any(kw in text for kw in personal_kw)
 
-        if is_question:
-            importance = 4   # 전파 X, 자유 대화 컨텍스트로만 사용
-        elif has_fact and len(text) >= 12:
-            importance = 9   # 평서문 + 사실 키워드 → 시드보다 강하게 전파
-        elif len(text) >= 30:
-            importance = 7
+        # importance 매핑 — 평서문은 모두 전파 후보(threshold 7+) 보장.
+        # 프로젝트 핵심: "플레이어 → A 발화" → propagation → "B가 알고 대화 이어감".
+        if has_personal:
+            importance = 10  # 자기소개: 최우선 회상 + 강한 전파
+        elif is_question:
+            importance = 4   # 질문은 전파 X
+        elif has_fact:
+            importance = 9   # 사실 보고: 시드보다 강하게 전파
         elif len(text) >= 15:
-            importance = 6
+            importance = 8   # 일반 평서문: 전파 후보 보장 (6→8)
         else:
-            importance = 5
+            importance = 7   # 짧은 평서문: 전파 후보 진입 (5→7)
 
         entry = MemoryEntry(
             id=f"dlg_{uuid.uuid4().hex[:8]}",
@@ -1009,7 +1473,10 @@ class NpcServer:
             importance=importance,
             timestamp=datetime.now(timezone.utc),
             source=MemorySource.DIALOGUE,
-            metadata={"player": True, "is_question": is_question, "has_fact": has_fact},
+            metadata={
+                "player": True, "is_question": is_question,
+                "has_fact": has_fact, "has_personal": has_personal,
+            },
         )
         self.stores[npc].add(entry)
 
@@ -1076,13 +1543,13 @@ class NpcServer:
         self,
         day: int | None = None,
         npc_conversation: bool = True,
-        npc_conversation_turns: int = 1,  # 2→1: 각 NPC 1회 발화 (속도 ↑)
+        npc_conversation_turns: int = 1,
+        fast: bool = True,  # 빠른 모드 — propagation transform 생략 (LLM 호출 ↓ 큰 속도)
     ) -> dict:
         """하루치 정보 전파 시뮬레이션 + 1쌍 NPC-NPC 자율 대화.
 
-        - 1단계: propagation (전파)
-        - 2단계: graph 무작위 페어 → simulate_conversation (Park et al. style)
-        - 두 결과 묶어 반환
+        - 1단계: propagation (전파). fast=True면 페르소나 변환 LLM 생략.
+        - 2단계: graph 무작위 페어 → simulate_conversation (자율 대화는 유지).
         """
         if self.graph is None:
             return {"day": self.day, "events": [], "error": "관계 그래프 없음"}
@@ -1097,6 +1564,7 @@ class NpcServer:
             graph=self.graph,
             stores=self.stores,
             transformer=self,
+            use_transform=not fast,  # fast 모드면 transform 생략
         )
         events = sim.tick(day)
 
@@ -1111,6 +1579,17 @@ class NpcServer:
                     )
                 except Exception as e:
                     print(f"[tick] NPC-NPC 대화 실패: {e}")
+
+        # 3단계: 메모리 정리 — NPC별 최대 보유 메모리 제한 (속도 유지)
+        # seed는 보존, importance 낮고 오래된 것부터 삭제.
+        pruned_total = 0
+        for npc in self.characters:
+            try:
+                pruned_total += self.stores[npc].prune(max_keep=60)
+            except Exception as e:
+                print(f"[tick] {npc} 메모리 정리 실패: {e}")
+        if pruned_total > 0:
+            print(f"[tick] 메모리 정리: 총 {pruned_total}개 삭제 (NPC당 60개 유지)")
 
         return {
             "day": day,

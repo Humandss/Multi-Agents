@@ -7,7 +7,8 @@ from pathlib import Path
 
 from ..memory import MemoryEntry, MemorySource, MemoryStore
 from .graph import RelationGraph
-from .transformer import PersonaTransformer
+# transformer 인자는 duck-typed (transform(sender, text, source) 메서드만 있으면 됨).
+# 실제로는 NpcServer가 transformer 역할 수행. PersonaTransformer 클래스는 legacy.
 
 
 # 페르소나별 importance 보정 (논문 Table 1)
@@ -30,10 +31,11 @@ class PropagationSimulator:
         self,
         graph: RelationGraph,
         stores: dict[str, MemoryStore],
-        transformer: PersonaTransformer,
+        transformer,  # duck-typed: transform(sender, text, source) 메서드 필요
         rng_seed: int = 42,
-        importance_threshold: int = 7,  # 6→7: 중요한 사건만 전파 (LLM 호출 ↓)
-        max_memories_per_meeting: int = 2,  # 3→2: 만남당 메모리 수 ↓
+        importance_threshold: int = 7,
+        max_memories_per_meeting: int = 1,  # 2→1: 만남당 1개만 전파 (속도)
+        use_transform: bool = False,  # 페르소나 변환 LLM 호출 비활성 → 큰 속도 향상
     ):
         self.graph = graph
         self.stores = stores
@@ -41,6 +43,7 @@ class PropagationSimulator:
         self.rng = random.Random(rng_seed)
         self.importance_threshold = importance_threshold
         self.max_per_meeting = max_memories_per_meeting
+        self.use_transform = use_transform
 
     def _select_to_share(self, sender_store: MemoryStore, receiver_npc: str, sender_npc: str):
         """sender가 receiver에게 전달할 메모리 후보 선택.
@@ -103,9 +106,26 @@ class PropagationSimulator:
 
             for mem in to_share:
                 source_kind = mem["metadata"].get("source", "observation")
-                transformed = self.transformer.transform(
-                    sender, mem["text"], source=source_kind
-                )
+                raw = mem["text"]
+                # 플레이어 발화 보존 — receiver가 "플레이어 → sender 발화"임을 명확히 인식.
+                is_player_origin = raw.startswith("플레이어가 말했다: ")
+                if self.use_transform:
+                    transformed = self.transformer.transform(
+                        sender, raw, source=source_kind
+                    )
+                    # transform 후에도 출처 정보 보존
+                    if is_player_origin:
+                        content = raw[len("플레이어가 말했다: "):][:100]
+                        transformed = f"플레이어가 나한테 '{content}'라고 했어"
+                else:
+                    # 빠른 모드: 페르소나 변환 생략. 출처 명시 보존.
+                    if is_player_origin:
+                        content = raw[len("플레이어가 말했다: "):][:100]
+                        transformed = f"플레이어가 나한테 '{content}'라고 했어"
+                    elif "한테 들었다: " in raw:
+                        transformed = raw.split("한테 들었다: ", 1)[1][:120]
+                    else:
+                        transformed = raw[:120]
                 new_imp = max(
                     1, min(10, round(mem["importance"] * IMPORTANCE_FACTOR.get(sender, 1.0)))
                 )

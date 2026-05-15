@@ -1,0 +1,41 @@
+{
+  "config": {
+    "inject_to": "mathilda",
+    "fact": "광장에 큰 곰이 나타났다는 소식이 들어왔다.",
+    "importance": 8,
+    "days": 7,
+    "seed": 42
+  },
+  "events_total": 170,
+  "events_relevant": 67,
+  "reach_ratio": 1.0,
+  "first_reached_day": {
+    "mathilda": 0,
+    "finn": 1,
+    "bernhardt": 1,
+    "elias": 1,
+    "hermann": 2
+  },
+  "reach_by_day": {
+    "0": 0.0,
+    "1": 0.75,
+    "2": 1.0,
+    "3": 1.0,
+    "4": 1.0,
+    "5": 1.0,
+    "6": 1.0,
+    "7": 1.0
+  },
+  "distortion": {
+    "avg_similarity": 0.5276553510729947,
+    "min_similarity": 0.4507328271865845,
+    "max_similarity": 0.8501265048980713,
+    "per_sender": {
+      "mathilda": 0.5382785693458889,
+      "elias": 0.520402308021273,
+      "hermann": 0.5684055062857541,
+      "finn": 0.5143251419067383,
+      "bernhardt": 0.4969587308519027
+    }
+  }
+}

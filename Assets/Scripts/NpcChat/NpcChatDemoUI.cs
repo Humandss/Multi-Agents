@@ -117,6 +117,18 @@ namespace NpcChat
             if (questCard != null) questCard.SetActive(false);
 
             AutoWireMissingSlots();
+
+            // DialogueManager 슬롯 자동 연결 (없으면 이 패널을 연결)
+            var dm = DialogueManager.Instance != null
+                ? DialogueManager.Instance
+                : FindObjectOfType<DialogueManager>();
+            if (dm != null && dm.dialoguePanel == null)
+                dm.dialoguePanel = gameObject;
+
+            // autoConnect 모드: InputField만 비활성 (게임 월드 키 입력 보장).
+            // gameObject 자체는 active 유지 (다른 시스템과의 의존성 보존).
+            if (autoConnectViaDialogueManager && inputField != null)
+                inputField.gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -192,31 +204,51 @@ namespace NpcChat
                 historyLogText.richText = true;
                 historyLogText.enableWordWrapping = true;
 
-                // ScrollRect의 Mask가 가리는 문제 회피: HistoryLogText를 ScrollRect 밖으로 reparent.
-                // HistoryScroll과 같은 위치 (DialoguePanel 자식)로 옮김.
-                if (historyScrollRect != null && historyLogText.transform.IsChildOf(historyScrollRect.transform))
+                // ScrollRect 정상 구조 복원 + RectMask2D 사용 (Mask 가림 문제 회피)
+                if (historyScrollRect != null && historyScrollRect.viewport != null)
                 {
-                    var scrollRt = historyScrollRect.GetComponent<RectTransform>();
-                    var panelParent = scrollRt.parent;  // DialoguePanel
+                    // HistoryLogText가 ScrollRect 밖에 있으면 다시 content 안으로 reparent
+                    if (historyScrollRect.content != null
+                        && !historyLogText.transform.IsChildOf(historyScrollRect.content))
+                    {
+                        historyLogText.transform.SetParent(historyScrollRect.content, false);
+                    }
+
+                    // HistoryLogText anchor: top-stretch, ContentSizeFitter on
                     var rt = historyLogText.rectTransform;
-                    rt.SetParent(panelParent, false);
-                    // HistoryScroll과 동일 영역 anchor 복제
-                    rt.anchorMin = scrollRt.anchorMin;
-                    rt.anchorMax = scrollRt.anchorMax;
-                    rt.pivot = new Vector2(0.5f, 1f);
-                    rt.anchoredPosition = new Vector2(0, 0);
-                    rt.offsetMin = scrollRt.offsetMin;
-                    rt.offsetMax = scrollRt.offsetMax;
-                    // 위쪽 시작
-                    var off = rt.offsetMax;
-                    rt.offsetMax = new Vector2(off.x, -8f);
+                    rt.anchorMin = new Vector2(0, 1);
+                    rt.anchorMax = new Vector2(1, 1);
+                    rt.pivot = new Vector2(0.5f, 1);
+                    rt.anchoredPosition = Vector2.zero;
+                    rt.sizeDelta = new Vector2(0, 0);
 
-                    // ContentSizeFitter 제거 (수동 height 관리)
-                    var oldFitter = historyLogText.GetComponent<UnityEngine.UI.ContentSizeFitter>();
-                    if (oldFitter != null) Destroy(oldFitter);
+                    var fitter = historyLogText.GetComponent<UnityEngine.UI.ContentSizeFitter>();
+                    if (fitter == null)
+                        fitter = historyLogText.gameObject.AddComponent<UnityEngine.UI.ContentSizeFitter>();
+                    fitter.horizontalFit = UnityEngine.UI.ContentSizeFitter.FitMode.Unconstrained;
+                    fitter.verticalFit = UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize;
 
-                    Debug.Log($"[NpcChatDemoUI] HistoryLogText를 ScrollRect 밖으로 reparent — 패널 자식으로 이동");
-                    // ScrollRect는 더 이상 사용 안 함 (배경 BG만 남음)
+                    // Content에도 ContentSizeFitter (HistoryLogText 크기에 따라 늘어남)
+                    var content = historyScrollRect.content;
+                    var contentFitter = content.GetComponent<UnityEngine.UI.ContentSizeFitter>();
+                    if (contentFitter == null)
+                        contentFitter = content.gameObject.AddComponent<UnityEngine.UI.ContentSizeFitter>();
+                    contentFitter.horizontalFit = UnityEngine.UI.ContentSizeFitter.FitMode.Unconstrained;
+                    contentFitter.verticalFit = UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize;
+
+                    // Viewport: 기존 Mask 제거하고 RectMask2D 사용 (clip만 하고 graphic 가리지 않음)
+                    var viewport = historyScrollRect.viewport.gameObject;
+                    var oldMask = viewport.GetComponent<UnityEngine.UI.Mask>();
+                    if (oldMask != null) Destroy(oldMask);
+                    var rectMask = viewport.GetComponent<UnityEngine.UI.RectMask2D>();
+                    if (rectMask == null) viewport.AddComponent<UnityEngine.UI.RectMask2D>();
+
+                    // ScrollRect 설정 보장
+                    historyScrollRect.horizontal = false;
+                    historyScrollRect.vertical = true;
+                    historyScrollRect.movementType = UnityEngine.UI.ScrollRect.MovementType.Clamped;
+
+                    Debug.Log($"[NpcChatDemoUI] ScrollRect 구조 복원 — RectMask2D 사용, 자동 스크롤 작동");
                 }
             }
         }
@@ -225,6 +257,15 @@ namespace NpcChat
         {
             UpdateDayText();
             ResetCurrentDisplay();
+
+            // 게임 시작 시 InputField 비활성 (WASD가 텍스트로 들어가지 않도록)
+            if (inputField != null)
+            {
+                inputField.DeactivateInputField();
+                inputField.text = "";
+            }
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            if (es != null) es.SetSelectedGameObject(null);
 
             if (autoConnectViaDialogueManager)
             {
@@ -246,9 +287,14 @@ namespace NpcChat
         {
             _client?.DispatchQueue();
 
-            // InputField 자동 재포커스: 패널 빈 영역 클릭으로 포커스를 잃어도
-            // 즉시 다시 활성. 다른 UI(드롭다운 옵션 등)가 선택됐을 때는 양보.
-            if (inputField != null
+            // InputField 자동 재포커스: dialogue 진행 중일 때만 (WS 연결 활성 OR DialogueManager 활성).
+            // dialogue 닫힌 상태에선 발동 X → 플레이어 WASD 이동 보장.
+            bool dialogueActive =
+                (_client != null && _client.IsOpen) ||
+                (DialogueManager.Instance != null && DialogueManager.Instance.CurrentNpc != null);
+
+            if (dialogueActive
+                && inputField != null
                 && inputField.gameObject.activeInHierarchy
                 && inputField.interactable
                 && !inputField.isFocused
@@ -299,6 +345,10 @@ namespace NpcChat
             HideQuestCard();
             SyncDropdown(rawName);
 
+            // InputField 활성 (게임 시작 시 비활성됐던 것)
+            if (inputField != null && !inputField.gameObject.activeSelf)
+                inputField.gameObject.SetActive(true);
+
             SetStatus($"{displayName} 연결 중...");
             await ConnectToNpc(rawName);
             if (inputField != null) inputField.ActivateInputField();
@@ -306,6 +356,16 @@ namespace NpcChat
 
         private async void HandleDialogueEnded()
         {
+            // InputField 비활성 + focus 해제 — 게임 월드에서 키 입력 흡수 방지
+            if (inputField != null)
+            {
+                inputField.DeactivateInputField();
+                inputField.text = "";
+                inputField.gameObject.SetActive(false);
+            }
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            if (es != null) es.SetSelectedGameObject(null);
+
             if (_client != null)
             {
                 await _client.CloseAsync();
@@ -570,22 +630,54 @@ namespace NpcChat
             memoryHintText.text = $"↳ {first.source}: {Truncate(first.text, 60)}";
         }
 
+        private bool _questCardRelocated = false;
+
         private void ShowQuest(Quest q)
         {
             if (questCard == null) return;
             if (q == null || !q.IsValid) { questCard.SetActive(false); return; }
+
+            // 최초 표시 시 채팅 패널 밖으로 reparent — Canvas 자식 좌측 상단으로 배치
+            if (!_questCardRelocated)
+            {
+                RelocateQuestCard();
+                _questCardRelocated = true;
+            }
 
             questCard.SetActive(true);
             if (questTitleText != null) questTitleText.text = $"★ {q.title}";
             if (questDescText != null) questDescText.text = q.description;
             if (questRewardText != null)
                 questRewardText.text = string.IsNullOrEmpty(q.reward) ? "" : $"보상: {q.reward}";
+            // history에 중복 표시 X — 카드 + LLM 응답 텍스트에 이미 포함됨
+        }
 
-            // history에도 표시
-            AppendHistory($"<color=#ffd54f>★ Quest: {q.title}</color>");
-            AppendHistory($"<size=85%><color=#bbb>  {q.description}</color></size>");
-            if (!string.IsNullOrEmpty(q.reward))
-                AppendHistory($"<size=85%><color=#bbb>  보상: {q.reward}</color></size>");
+        /// <summary>
+        /// Quest 카드를 채팅 패널 밖(Canvas 직접 자식)으로 이동하여 화면 좌측 중앙에 표시.
+        /// 채팅창과 시각적으로 분리.
+        /// </summary>
+        private void RelocateQuestCard()
+        {
+            if (questCard == null) return;
+            // Canvas 찾기 (panel의 root)
+            var canvas = questCard.GetComponentInParent<Canvas>();
+            if (canvas == null) return;
+
+            var rt = questCard.GetComponent<RectTransform>();
+            if (rt == null) return;
+
+            // Canvas 직접 자식으로 이동
+            rt.SetParent(canvas.transform, false);
+
+            // 화면 좌측 중앙 — DialoguePanel은 우측 50%, 좌측 비어있는 영역 사용
+            rt.anchorMin = new Vector2(0.02f, 0.35f);
+            rt.anchorMax = new Vector2(0.40f, 0.65f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            rt.localScale = Vector3.one;
+
+            // 가장 위 (다른 UI 위로 표시)
+            rt.SetAsLastSibling();
         }
 
         private void HideQuestCard()
@@ -600,35 +692,17 @@ namespace NpcChat
             if (historyLogText != null)
             {
                 historyLogText.text = _log.ToString();
-                historyLogText.ForceMeshUpdate();
-
-                // ContentSizeFitter 없이 직접 height 설정
-                float preferredHeight = historyLogText.preferredHeight + 16f;
-                var textRt = historyLogText.rectTransform;
-                textRt.sizeDelta = new Vector2(textRt.sizeDelta.x, preferredHeight);
+                // ContentSizeFitter가 자동으로 RectTransform 크기 갱신.
+                // Layout 강제 갱신 후 ScrollRect를 맨 아래로 (최신 메시지 보이게).
+                LayoutRebuilder.ForceRebuildLayoutImmediate(historyLogText.rectTransform);
                 if (historyScrollRect != null && historyScrollRect.content != null)
-                {
-                    var c = historyScrollRect.content;
-                    c.sizeDelta = new Vector2(c.sizeDelta.x, preferredHeight);
-                }
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(historyScrollRect.content);
 
-                // 진단: width / 부모 alpha / 위치 확인
-                var rect = textRt.rect;
-                var worldPos = textRt.position;
-                var canvasGroup = GetComponentInParent<CanvasGroup>();
-                float parentAlpha = canvasGroup != null ? canvasGroup.alpha : 1f;
-                Debug.Log($"[AppendHistory v3] rect=(w={rect.width:F1},h={rect.height:F1}), worldPos=({worldPos.x:F0},{worldPos.y:F0}), fontSize={historyLogText.fontSize}, color={historyLogText.color}, parentAlpha={parentAlpha:F2}");
-
-                // 자동 스크롤
                 if (historyScrollRect != null)
                 {
                     Canvas.ForceUpdateCanvases();
-                    historyScrollRect.verticalNormalizedPosition = 0f;
+                    historyScrollRect.verticalNormalizedPosition = 0f;  // 0 = 맨 아래
                 }
-            }
-            else
-            {
-                Debug.LogWarning("[NpcChatDemoUI] AppendHistory: historyLogText가 null — 메시지 누락");
             }
         }
 
