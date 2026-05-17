@@ -48,6 +48,44 @@ def create_app() -> FastAPI:
         chroma_dir=CHROMA_DIR,
         use_memory=True,
     )
+
+    # --reset 옵션 (환경 변수 NPC_RESET_ON_START=1): 시작 시 자동 메모리 reset + reseed
+    import os as _os
+    if _os.environ.get("NPC_RESET_ON_START") == "1":
+        print("[app] --reset 감지 — ChromaDB 초기화 + 시드 재적재 중...")
+        try:
+            for npc in engine.characters:
+                engine.stores[npc].reset()
+            engine.day = 0
+
+            # 시드 메모리 재적재
+            import yaml as _yaml
+            import uuid as _uuid
+            from datetime import datetime, timezone
+            from ..memory import MemoryEntry, MemorySource
+            seed_path = ROOT / "data" / "seed" / "memories.yaml"
+            reseeded = 0
+            if seed_path.exists():
+                with seed_path.open(encoding="utf-8") as f:
+                    seed_data = _yaml.safe_load(f) or {}
+                for npc, mems in seed_data.items():
+                    if npc not in engine.characters:
+                        continue
+                    for i, m in enumerate(mems or []):
+                        entry = MemoryEntry(
+                            id=f"seed_{npc}_{i:03d}_{_uuid.uuid4().hex[:6]}",
+                            text=m.get("text", ""),
+                            importance=int(m.get("importance", 5)),
+                            timestamp=datetime.now(timezone.utc),
+                            source=MemorySource.SEED,
+                            metadata={"npc": npc},
+                        )
+                        engine.stores[npc].add(entry)
+                        reseeded += 1
+            print(f"[app] reset 완료 — 시드 {reseeded}개 재적재. 메모리 카운트: {engine.memory_counts()}")
+        except Exception as e:
+            print(f"[app] reset 실패: {e}")
+
     print("[app] 준비 완료")
     app.state.engine = engine
 
@@ -132,6 +170,73 @@ def create_app() -> FastAPI:
             return JSONResponse(add_display_npc(result))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/memory/reset")
+    def reset_memory(reseed: bool = True):
+        """모든 NPC의 ChromaDB 메모리 초기화 + (옵션) 시드 메모리 재적재.
+
+        시나리오 처음부터 다시 시작할 때, 또는 코드 변경 후 기존 메모리가 호환 안 될 때.
+        """
+        # 1) 모든 NPC store reset
+        for npc in engine.characters:
+            try:
+                engine.stores[npc].reset()
+            except Exception as e:
+                return JSONResponse({"error": f"{npc} reset 실패: {e}"}, status_code=500)
+
+        # 2) Trust / Quest 상태도 초기화
+        engine.trust = type(engine.trust)()
+        engine.quests = type(engine.quests)()
+        engine.day = 0
+
+        # 3) 시드 메모리 재적재
+        reseeded = 0
+        if reseed:
+            try:
+                import yaml as _yaml
+                seed_path = ROOT / "data" / "seed" / "memories.yaml"
+                if seed_path.exists():
+                    with seed_path.open(encoding="utf-8") as f:
+                        seed_data = _yaml.safe_load(f) or {}
+                    from datetime import datetime, timezone
+                    import uuid as _uuid
+                    from ..memory import MemoryEntry, MemorySource
+                    for npc, mems in seed_data.items():
+                        if npc not in engine.characters:
+                            continue
+                        for i, m in enumerate(mems or []):
+                            entry = MemoryEntry(
+                                id=f"seed_{npc}_{i:03d}_{_uuid.uuid4().hex[:6]}",
+                                text=m.get("text", ""),
+                                importance=int(m.get("importance", 5)),
+                                timestamp=datetime.now(timezone.utc),
+                                source=MemorySource.SEED,
+                                metadata={"npc": npc},
+                            )
+                            engine.stores[npc].add(entry)
+                            reseeded += 1
+            except Exception as e:
+                return JSONResponse({
+                    "reset": True, "reseeded": reseeded,
+                    "error": f"reseed 부분 실패: {e}",
+                }, status_code=200)
+
+        return JSONResponse({
+            "reset": True,
+            "reseeded_memories": reseeded,
+            "memory_counts": engine.memory_counts(),
+        })
+
+    @app.get("/memory/player/{npc}")
+    def player_memories(npc: str):
+        """특정 NPC가 가진 플레이어 발화 메모리 전체 (디버그/시연용)."""
+        npc_id = normalize(npc)
+        if npc_id not in engine.characters:
+            return JSONResponse({"error": "unknown npc"}, status_code=404)
+        return JSONResponse({
+            "npc": display(npc_id),
+            "player_memories": engine.stores[npc_id].find_player_all(limit=50),
+        })
 
     @app.get("/quests")
     def list_quests():
@@ -237,8 +342,8 @@ def create_app() -> FastAPI:
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    # 한 세션 = 한 대화. 직전 6쌍(=12 메시지) 유지해서 멀티턴 흐름 살림.
-    HISTORY_TURNS = 6
+    # 한 세션 = 한 대화. 직전 3쌍(=6 메시지) 유지 — 속도 우선.
+    HISTORY_TURNS = 3
 
     @app.websocket("/ws/{npc_name}")
     async def chat_ws(ws: WebSocket, npc_name: str):

@@ -1,22 +1,20 @@
 # NPC 간 관계 그래프.
 # frequency: 하루에 두 NPC가 만나서 정보를 교환할 확률 (0.0 ~ 1.0)
 # 양방향 관계는 (A, B)로 한 번만 정의. simulator가 양쪽 모두로 처리.
+#
+# 시연 안정성을 위해 모두 0.9 — 한 tick에 정보가 거의 모든 NPC에 도달.
 
 edges:
-  # mathilda는 술집 주인 = 정보 허브, 거의 모두와 자주 만남
-  - [mathilda, hermann, 0.6]
-  - [mathilda, finn, 0.8]
-  - [mathilda, bernhardt, 0.5]
-  - [mathilda, elias, 0.2]    # elias가 사과 파이 가끔 사 감
+  - [mathilda, hermann, 0.9]
+  - [mathilda, finn, 0.9]
+  - [mathilda, bernhardt, 0.9]
+  - [mathilda, elias, 0.9]
 
-  # finn은 광장에서 활동, 사람 많이 만남
-  - [finn, hermann, 0.3]
-  - [finn, bernhardt, 0.4]
-  - [finn, elias, 0.15]       # elias가 음유시인 별로 안 좋아함
+  - [finn, hermann, 0.9]
+  - [finn, bernhardt, 0.9]
+  - [finn, elias, 0.9]
 
-  # bernhardt는 거래상 elias랑 hermann과 자주
-  - [bernhardt, hermann, 0.5]  # 재료/도구 거래
-  - [bernhardt, elias, 0.3]    # 약초/차 거래
+  - [bernhardt, hermann, 0.9]
+  - [bernhardt, elias, 0.9]
 
-  # hermann과 elias: 검에 결계 부여 작업
-  - [hermann, elias, 0.2]
+  - [hermann, elias, 0.9]

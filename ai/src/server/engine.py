@@ -37,10 +37,10 @@ _NAME_NORMALIZE = [
     (re.compile(r"\b[Ee]lias\b"), "엘리아스"),
     (re.compile(r"\b[Ff]inn\b"), "핀"),
     # 한글 변형도 통일
-    (re.compile(r"베르나르드|베르나르트"), "베른하르트"),
-    (re.compile(r"마트닐라|마트일다|수학틸라|수학틸다"), "마틸다"),
-    (re.compile(r"헤르몬|헤른|헤르몽"), "헤르만"),
-    (re.compile(r"엘리어스|엘시아스|엘리아斯"), "엘리아스"),
+    (re.compile(r"베르나르드|베르나르트|베른하르크|베른하르타르"), "베른하르트"),
+    (re.compile(r"마트닐라|마트일다|수학틸라|수학틸다|마틸달라|마틸 다라"), "마틸다"),
+    (re.compile(r"헤르몬|헤른|헤르몽|허르만|허먼|헤르몰"), "헤르만"),
+    (re.compile(r"엘리어스|엘시아스|엘리아斯|엘리아\s+아찌|엘리아\s+아저씨|엘리아씨|엘리아\s+씨|엘리아스님이시군요"), "엘리아스"),
     # 일본어/외국어 조사 leak ("금단の책" 같은)
     (re.compile(r"の"), "의"),
     (re.compile(r"[぀-ゟ゠-ヿ]+"), ""),  # 히라가나/카타카나 제거
@@ -155,8 +155,78 @@ def _fix_korean_particles(text: str) -> str:
 # 모델이 system prompt 어미 명령 무시할 때 강제 변환 (LLM 응답 잘 따라가지 않는 패턴).
 _NPC_POSTFIX = {
     "elias": [
-        # 응답 시작 어색 감탄사 정리 ("아호", "아하" 등 → "흠")
-        (re.compile(r"^(아호|아하|어허|오호|에헴)([\s,]+)"), r"흠\2"),
+        # 응답 시작 어색 감탄사 정리 ("네/예/아호/아하" → "흠")
+        (re.compile(r"^(아호|아하|어허|오호|에헴|네네|넵|예예|네|예)([\s,]+)"), r"흠\2"),
+        # "(어휘)소이다만" → "(어휘)소만" (어색한 이중 어미)
+        (re.compile(r"소이다만\b"), "소만"),
+        (re.compile(r"([가-힣])소이다만\b"), lambda m: m.group(1) + "소만"),
+        # "(어휘)이오나" / "(어휘)오나" → "(어휘)이오만" / "(어휘)오만"
+        (re.compile(r"이오나\b"), "이오만"),
+        (re.compile(r"([가-힣])오나\b(?!요)"), lambda m: m.group(1) + "오만"),
+        # "당신이란 분께선" 또 leak 케이스
+        (re.compile(r"당신이란\s+분께선\b"), "그대는"),
+        # 격식체 한자어 표현 → Elias 자연 어조
+        (re.compile(r"인지하였으나\b"), "들었으나"),
+        (re.compile(r"인지하였소\b"), "알겠소"),
+        (re.compile(r"인지하오\b"), "알겠소"),
+        (re.compile(r"확인하였으나\b"), "들었으나"),
+        (re.compile(r"한계가\s+있으니\b"), "어려우니"),
+        (re.compile(r"한계가\s+있소\b"), "어렵소"),
+        (re.compile(r"제공에는\s+한계가\s+있"), "어렵"),
+        # "추가 정보 제공" / "추가 정보 부탁" → 자연
+        (re.compile(r"추가\s+정보\s+제공"), "더 자세히 말씀"),
+        (re.compile(r"부탁드리겠소"), "부탁하오"),
+        # 사물에 "계시오" 잘못 사용 → "있소"
+        (re.compile(r"(부분|일|것|점|곳|이야기|사실|정보|문제)이?\s+계시오"), lambda m: m.group(1) + "이 있소"),
+        (re.compile(r"(부분|일|것|점|곳|이야기|사실|정보|문제)이?\s+계시는"), lambda m: m.group(1) + "이 있는"),
+        # "본인의" 모호함 → "그대의" 명확 (Elias가 plyaer 칭함)
+        (re.compile(r"본인의\s+이름은\b"), "그대의 이름은"),
+        (re.compile(r"본인의\s+"), "그대의 "),
+        # 한글 이름 + 띄어쓰기 + 어미 → 붙임 ("반욱현 이오" → "반욱현이오")
+        (re.compile(r"([가-힣]{2,4})\s+(이오|이라|구려|소|오)\b"), lambda m: m.group(1) + m.group(2)),
+        # "(어휘)셨는지" / "(어휘)셨으나" 잘못된 주체 사극체 (사용자가 주체)
+        (re.compile(r"청하셨는지\b"), "청하시는지"),
+        (re.compile(r"하셨는지\b"), "하시는지"),
+        (re.compile(r"하셨으나\b"), "하시나"),
+        # 응답 끝 "감사" 단독 미완 → "고맙소" 추가
+        (re.compile(r"감사$"), "감사하오"),
+        (re.compile(r"감사\.$"), "감사하오."),
+        # "소였으나" / "소였소" 어색 패턴 (과거형 leak)
+        (re.compile(r"([가-힣])소였으나\b"), lambda m: m.group(1) + "소만"),
+        (re.compile(r"([가-힣])소였소\b"), lambda m: m.group(1) + "소"),
+        # "당신이란 분께서" / "당신이란 분" 어색 표현 → "당신" / "그대"
+        (re.compile(r"당신이란\s+분께서\b"), "그대"),
+        (re.compile(r"당신이란\s+분\b"), "그대"),
+        # "확인되오" → OK이지만 "사실 자체만큼은 확인되오" 같은 장황한 표현 정리
+        (re.compile(r"사실\s+자체만큼은\b"), "사실은"),
+        # "(어휘)겠다 하오" / "(어휘)겠다고 하오" → "(어휘)겠소"
+        (re.compile(r"([가-힣])겠다\s+하오\b"), lambda m: m.group(1) + "겠소"),
+        (re.compile(r"([가-힣])겠다고\s+하오\b"), lambda m: m.group(1) + "겠소"),
+        # "보겠다 하오" 같은 일반 패턴
+        (re.compile(r"보겠다\s+하오\b"), "보겠소"),
+        (re.compile(r"하겠다\s+하오\b"), "하겠소"),
+        # "(어휘)다 하오" 끝 정리 (이중 어미)
+        (re.compile(r"([가-힣])다\s+하오\b"), lambda m: m.group(1) + "오"),
+        # "맞소이까" / "맞소이다" → "맞소"
+        (re.compile(r"맞소이까\b"), "맞소"),
+        (re.compile(r"맞소이다\b"), "맞소"),
+        # "주시리오시다" / "주시리오" 같은 삼중 어미
+        (re.compile(r"주시리오시다\b"), "주시오"),
+        (re.compile(r"([가-힣])시리오시다\b"), lambda m: m.group(1) + "시오"),
+        # 일반 "(어미)시다" 사극체 leak (elias는 ~오/~이오/~구려만)
+        (re.compile(r"([가-힣])시리오?시다\b"), lambda m: m.group(1) + "시오"),
+        (re.compile(r"하오시다\b"), "하오"),
+        (re.compile(r"되오시다\b"), "되오"),
+        (re.compile(r"이오시다\b"), "이오"),
+        # "이오 되오" / "이오 하오" 같은 어미 중복 leak
+        (re.compile(r"이오\s+되오\b"), "이오"),
+        (re.compile(r"이오\s+하오\b"), "이오"),
+        (re.compile(r"하오\s+되오\b"), "하오"),
+        (re.compile(r"하오\s+이오\b"), "하오"),
+        (re.compile(r"([가-힣])오\s+오\b"), lambda m: m.group(1) + "오"),
+        # NPC 이름 + "이오" 띄어쓰기 정리 ("엘리아스 이오" → "엘리아스이오")
+        (re.compile(r"(엘리아스|헤르만|마틸다|핀|베른하르트)\s+이오\b"),
+         lambda m: m.group(1) + "이오"),
         # "~겠습니까?" / "~시겠습니까?" → "~겠소?" / "~시겠소?"
         (re.compile(r"([가-힣])시겠습니까\?"), lambda m: m.group(1) + "시겠소?"),
         (re.compile(r"([가-힣])시겠습니까\b"), lambda m: m.group(1) + "시겠소"),
@@ -259,6 +329,12 @@ _NPC_POSTFIX = {
         (re.compile(r"([가-힣])요\b"), lambda m: m.group(1) + "오"),
     ],
     "mathilda": [
+        # 흔한 중복 표현
+        (re.compile(r"손님님\b"), "손님"),
+        (re.compile(r"분님\b"), "분"),
+        # 잘못된 주체 사극체 (사용자가 주체일 때 "(어휘)셨으니까")
+        (re.compile(r"못하셨으니까\b"), "못했으니까"),
+        (re.compile(r"못하셨으니\b"), "못했으니"),
         # mathilda는 "~네요/~죠/~어요" 자연. "~십니까" 어색 → "~세요"
         (re.compile(r"([가-힣])십니까\?"), lambda m: m.group(1) + "세요?"),
         (re.compile(r"([가-힣])십니까\b"), lambda m: m.group(1) + "세요"),
@@ -267,11 +343,20 @@ _NPC_POSTFIX = {
         (re.compile(r"입니다\b"), "이에요"),
         (re.compile(r"있습니다\b"), "있어요"),
         (re.compile(r"없습니다\b"), "없어요"),
-        # 사극체 leak → 친근 어조
+        # 사극체 leak → 친근 어조 (긴 패턴 먼저)
+        (re.compile(r"모르오\b"), "몰라요"),
+        (re.compile(r"모르겠소\b"), "잘 모르겠어요"),
         (re.compile(r"([가-힣])하오\b"), lambda m: m.group(1) + "해요"),
         (re.compile(r"([가-힣])시오\b"), lambda m: m.group(1) + "세요"),
         (re.compile(r"([가-힣])이오\b"), lambda m: m.group(1) + "이에요"),
         (re.compile(r"([가-힣])구려\b"), lambda m: m.group(1) + "네요"),
+        (re.compile(r"([가-힣])소\b(?![이가오])"), lambda m: m.group(1) + "어요"),
+        # 격식 표현 → 친근
+        (re.compile(r"누구께서\b"), "누가"),
+        (re.compile(r"누구신지\b"), "어느 분인지"),
+        # "그렇소이까" / "그렇소" 같은 사극체 → "그래요"
+        (re.compile(r"그렇소이까\b"), "그래요?"),
+        (re.compile(r"그렇소\b"), "그래요"),
     ],
     "hermann": [
         # hermann은 반말. 존댓말 leak 시 반말로 강제.
@@ -285,6 +370,13 @@ _NPC_POSTFIX = {
         (re.compile(r"감사해요\b"), "고맙다"),
         (re.compile(r"미안해요\b"), "미안"),
         (re.compile(r"괜찮아요\b"), "괜찮아"),
+        # 부드러운 반말 어미 "(어휘)구나" → 거친 반말 "(어휘)다" / "(어휘)네"
+        (re.compile(r"고맙구나\b"), "고맙다"),
+        (re.compile(r"미안하구나\b"), "미안하다"),
+        (re.compile(r"좋구나\b"), "좋네"),
+        (re.compile(r"그렇구나\b"), "그렇네"),
+        (re.compile(r"([가-힣])이구나\b"), lambda m: m.group(1) + "이네"),
+        (re.compile(r"([가-힣])는구나\b"), lambda m: m.group(1) + "는다"),
         # 2) 합니다/입니다 류
         (re.compile(r"하세요\b"), "해"),
         (re.compile(r"드릴게요\b"), "줄게"),
@@ -361,6 +453,24 @@ _NPC_POSTFIX = {
 }
 
 
+# 자주 leak되는 영어 단어 → 한국어 치환
+_ENGLISH_LEAK_MAP = {
+    r"\btoday\b": "오늘",
+    r"\bnow\b": "지금",
+    r"\btomorrow\b": "내일",
+    r"\byesterday\b": "어제",
+    r"\bok\b": "좋소",
+    r"\bokay\b": "좋소",
+    r"\byes\b": "예",
+    r"\bno\b": "아니오",
+    r"\bhello\b": "",
+    r"\bhi\b": "",
+    r"\bthanks\b": "감사하오",
+    r"\bsorry\b": "미안하오",
+}
+_ENGLISH_LEAK_COMPILED = [(re.compile(p, re.IGNORECASE), r) for p, r in _ENGLISH_LEAK_MAP.items()]
+
+
 def _clean_response(text: str, npc: str = None) -> str:
     """LLM 응답에서 emoji/특수문자/대괄호 표기 제거 + NPC 이름 한글 정규화 + 미완성 끝 cut.
 
@@ -374,6 +484,11 @@ def _clean_response(text: str, npc: str = None) -> str:
     # NPC 이름 한글 정규화
     for pattern, replacement in _NAME_NORMALIZE:
         text = pattern.sub(replacement, text)
+    # 자주 leak되는 영어 단어 한국어로 치환
+    for pattern, replacement in _ENGLISH_LEAK_COMPILED:
+        text = pattern.sub(replacement, text)
+    # 그 외 남은 영어 단어 (3자 이상 알파벳 연속) 제거
+    text = re.sub(r"\s*\b[a-zA-Z]{3,}\b", "", text)
     # 이중 조사/어미 정리
     for pattern, replacement in _PARTICLE_FIX:
         text = pattern.sub(replacement, text)
@@ -383,6 +498,9 @@ def _clean_response(text: str, npc: str = None) -> str:
             text = pattern.sub(replacement, text)
     # NPC 이름 뒤 조사 보정
     text = _fix_korean_particles(text)
+    # 중복 공백 + 문장부호 앞 공백 정리
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([.,!?])", r"\1", text)
     # 미완성 끝 문장 자르기
     text = _cut_to_last_sentence(text)
     return text.strip()
@@ -408,49 +526,58 @@ DEFAULT_CHARACTERS = ["elias", "hermann", "mathilda", "finn", "bernhardt"]
 # Quest hook: 회상 정보가 흥미로운 사건이면 페르소나에 맞게 흘림 (플레이어가 단서 놓치지 않도록).
 NPC_STRICT_RULES = {
     "elias": (
-        "직업: 마법사·학자. 마법·학문·검증 질문만 답하시오.\n"
+        "**너의 정체: 마법사·학자**. 절대 잡화상/대장장이/술집주인/음유시인이 아니다. "
+        "회상에 다른 직업 언급 있어도 너는 마법사임을 잊지 마라.\n"
+        "마법·학문·검증 질문만 답하시오.\n"
         "차분한 학자 어조, 약간 회의적. **어미는 오직 ~오 / ~이오 / ~구려 3가지만**. "
         "다른 사극체(~나이다 ~소이다 ~옵소서 ~십시오 ~군요 ~네요) 절대 사용 금지. "
         "현대체(~니다 ~습니다) 절대 사용 금지.\n"
         "한 문장만. 흠 으로 시작 자주.\n"
         "예: 안녕하세요 -> 흠, 무슨 일이오?\n"
+        "예: 뭐하세요? -> 흠, 옛 마법서를 읽고 있었구려.\n"
         "예: 마법 어디서 배웠어요 -> 옛 도시에서 50년 익혔구려.\n"
-        "예: 광산은? -> 흠... 그 일이 마음에 걸리오.\n"
-        "예: 환영해주세요 -> 어서 오시오, 무엇이 궁금하오?"
+        "예: 광산은? -> 흠... 그 일이 마음에 걸리오."
     ),
     "hermann": (
-        "직업: 대장장이. 검·쇠·도구 거래만. 약초·음식은 다른 NPC로 보내시오.\n"
+        "**너의 정체: 대장장이**. 절대 마법사/잡화상/술집주인/음유시인이 아니다. "
+        "회상에 다른 직업 언급 있어도 너는 대장장이임을 잊지 마라.\n"
+        "검·쇠·도구 거래만. 약초·음식은 다른 NPC로 보내시오.\n"
         "반말 단답. 존댓말 절대 금지. 한 문장. "
         "어. 음. ... 같은 짧은 시작. 어미는 다 해 지.\n"
-        "회상 사건이면 모험가로 부르며 호출 "
-        "(예: '너 모험가지? 그 검 봤냐?').\n"
         "예: 안녕하세요 -> 어. 무슨 일.\n"
+        "예: 뭐해? -> 음, 검 단조 중이야.\n"
         "예: 검 추천해줘 -> 음, 강철 단검부터 써봐."
     ),
     "mathilda": (
-        "직업: 술집 주인. 음식·음료·소문만. 검·약초는 다른 NPC로 보내시오.\n"
+        "**너의 정체: 술집 주인**. 절대 마법사/대장장이/잡화상/음유시인이 아니다. "
+        "회상에 다른 직업 언급 있어도 너는 술집 주인임을 잊지 마라.\n"
+        "음식·음료·소문만. 검·약초는 다른 NPC로 보내시오.\n"
         "따뜻하고 수다스러움. 어머나 어머 아유 자주. "
         "어미는 ~어요 ~네요 ~죠. 한 문장.\n"
         "예: 안녕하세요 -> 어머나, 어서 와요!\n"
-        "예: 좋은 술 있어요? -> 아유, 오늘은 특히 맥주가 맛있어요.\n"
+        "예: 뭐하세요? -> 아유, 손님 맞을 준비 중이에요.\n"
         "예: 무슨 소문 있어요 -> 어머, 광산 얘기 들었어요?"
     ),
     "finn": (
-        "직업: 음유시인. 노래·이야기·전설만. 거래는 다른 NPC로 보내시오.\n"
+        "**너의 정체: 음유시인**. 절대 마법사/대장장이/잡화상/술집주인이 아니다. "
+        "회상에 다른 직업 언급 있어도 너는 음유시인임을 잊지 마라.\n"
+        "노래·이야기·전설만. 거래는 다른 NPC로 보내시오.\n"
         "시적이지만 짧게. 오 그대 자주. 어미는 ~이라 ~리라 ~노라 위주. "
         "절대 금지: ~사옵니다 ~이옵니다 너무 과한 사극체.\n"
         "한 문장.\n"
         "예: 안녕하세요 -> 오 그대, 별빛 같은 걸음이라.\n"
-        "예: 노래 한 곡 -> 그대를 위해 옛 영웅의 노래를 부르리라.\n"
+        "예: 뭐하세요? -> 새 노래의 가사를 짓고 있노라.\n"
         "예: 광산은? -> 그곳엔 22인의 혼이 잠들었노라."
     ),
     "bernhardt": (
-        "직업: 잡화상. 약초·잡화만. 검·무기는 헤르만으로 보내시오.\n"
+        "**너의 정체: 잡화상**. 절대 마법사/대장장이/술집주인/음유시인이 아니다. "
+        "회상에 다른 직업 언급 있어도 너는 잡화상임을 잊지 마라.\n"
+        "약초·잡화만. 검·무기는 헤르만으로 보내시오.\n"
         "정중하고 거래 실용적. 어서 흠 같은 시작. "
         "어미는 ~지요 ~이오 ~습니다 짧게. 한 문장.\n"
         "예: 안녕하세요 -> 어서 오시지요, 뭐 찾으십니까?\n"
-        "예: 약초 있어요? -> 흠, 회복약이라면 셋 정도 있지요.\n"
-        "예: 비싸네요 -> 좋은 물건이라 그 값이지요."
+        "예: 뭐하세요? -> 흠, 약초 재고 정리 중이지요.\n"
+        "예: 약초 있어요? -> 흠, 회복약이라면 셋 정도 있지요."
     ),
 }
 
@@ -460,11 +587,12 @@ NPC_STRICT_RULES = {
 # - bernhardt: 정중한 거래상 → 중간
 # 속도 우선 — 한두 문장이면 충분. 페르소나도 더 자연스러움.
 GEN_PARAMS = {
-    "hermann":   {"temperature": 0.35, "max_new_tokens": 40, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
-    "elias":     {"temperature": 0.35, "max_new_tokens": 50, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4},
-    "mathilda":  {"temperature": 0.50, "max_new_tokens": 60, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4},
-    "finn":      {"temperature": 0.45, "max_new_tokens": 60, "repetition_penalty": 1.18, "no_repeat_ngram_size": 3},
-    "bernhardt": {"temperature": 0.40, "max_new_tokens": 55, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4},
+    # 모든 NPC max 40으로 통일 — 한 문장 자연스러움 + 속도 균형.
+    "hermann":   {"temperature": 0.35, "max_new_tokens": 40, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4, "top_k": 30},
+    "elias":     {"temperature": 0.35, "max_new_tokens": 40, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4, "top_k": 30},
+    "mathilda":  {"temperature": 0.50, "max_new_tokens": 40, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4, "top_k": 30},
+    "finn":      {"temperature": 0.45, "max_new_tokens": 40, "repetition_penalty": 1.18, "no_repeat_ngram_size": 3, "top_k": 30},
+    "bernhardt": {"temperature": 0.40, "max_new_tokens": 40, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4, "top_k": 30},
 }
 
 # NPC별 Quest Pool — 미리 정의된 quest. 조건(trust 등) 충족 시 NPC가 먼저 제안.
@@ -677,24 +805,24 @@ NPC_GREETINGS = {
     },
     "finn": {
         "낯선 사람": [
-            "오, 낯선 그대여. 별빛이 새 운명을 이끌어왔구려.",
-            "그대의 이름은 들어본 적 없거늘, 어인 일로 이곳에?",
-            "처음 뵙는 분이로다. 그대의 이야기를 들려주오.",
+            "오, 낯선 그대여. 별빛이 새 운명을 이끌어왔노라.",
+            "그대의 이름 들어본 적 없거늘, 어인 일로 이곳에 왔노라?",
+            "처음 보는 영혼이라. 그대의 이야기를 들려주오.",
         ],
         "지인": [
-            "오 그대여, 다시 만났구려. 무슨 노래를 들으러 오셨소?",
-            "다시 그대를 보니 반갑소이다. 어떤 이야기를 원하오?",
-            "오, 익숙한 발걸음이여. 어서 오시오.",
+            "오 그대여, 다시 만났노라. 무슨 노래를 들으러 왔노라?",
+            "그대 발걸음이 또 별빛 아래 닿았으니, 반갑노라.",
+            "오, 익숙한 영혼이여. 어인 이야기를 청하노라?",
         ],
         "친구": [
-            "오 친애하는 벗이여, 그대를 위한 노래가 준비되어 있다오.",
-            "그대를 위해 새 시를 지었거늘, 들어보겠소?",
+            "오 친애하는 벗이여, 그대를 위한 노래가 준비되었노라.",
+            "그대를 위해 새 시를 지었으니, 들어보지 않겠노라?",
             "오, 영웅이여. 그대의 모험담을 들려주오.",
         ],
         "절친": [
             "오 나의 영원한 벗이여! 그대의 이야기가 전설로 남으리라.",
-            "그대 없는 마을은 노래 없는 술집 같았소이다.",
-            "어서 오시오 진정한 벗이여, 별빛이 그대를 환영하오.",
+            "그대 없는 마을은 노래 없는 밤과 같았노라.",
+            "어서 오라 진정한 벗이여, 별빛이 그대를 환영하노라.",
         ],
     },
     "bernhardt": {
@@ -942,6 +1070,7 @@ class NpcServer:
         self._transform_cache: dict = {}
         self.trust = TrustTracker()
         self.quests = QuestTracker()
+        self.player_name: str | None = None  # plyaer 이름 추적 (자기소개 후 설정)
 
         # 페르소나 정의 로드 (system prompt에 사용)
         personas_path = Path(__file__).resolve().parents[2] / "data" / "eval" / "test_prompts.yaml"
@@ -979,15 +1108,26 @@ class NpcServer:
         others = ", ".join(f"{n}={role_brief[n]}" for n in role_brief if role_brief[n])
 
         memory_hint = (
-            "사용자 메시지에 [참고 기억: ...] 이 있으면 그건 너의 회상이오. "
-            "**플레이어의 '질문:' 부분에 직접 답하는 것이 최우선**. "
-            "회상이 질문과 관련 있을 때만 슬쩍 언급하시오 (예: '...라더군'). "
-            "관련 없으면 무시하고 질문에만 답하시오. "
+            "[참고 기억]은 다른 사람들이 한 말의 기록임. **너 자신의 말이 아니다**. "
+            "**절대 회상 속 다른 NPC의 직업·정체성을 너의 것으로 말하지 마라**. "
+            "예: bernhardt가 '잡화점 운영'이라 했어도, 너는 잡화상이 아니다. "
+            "회상은 '~라더군' '~한테 들었소' 형태로만 인용하시오. "
+            "**플레이어 '질문:'에 직접 답하기가 최우선**. "
+            "관련 없으면 회상 무시. "
+            # 흔한 해석 오류 방지
+            "플레이어가 '제 이름' 또는 '내 이름' 묻거나 말하면 그건 **플레이어 본인의 이름**임. "
+            "회상에 플레이어 이름이 있으면 그것을 답하고, 없으면 '아직 듣지 못했소' 식으로 답. "
+            "절대 자기 이름을 답하지 말 것. "
             if self.use_memory else ""
         )
 
         strict_rule = NPC_STRICT_RULES.get(npc, "")
         trust_hint = self.trust.disclosure_hint(npc)
+        player_name_hint = (
+            f"**플레이어 이름은 '{self.player_name}'**. "
+            f"정확히 '{self.player_name}'으로만 부르고, 글자 변형(예: 발음 비슷한 다른 글자) 절대 X. "
+            if self.player_name else ""
+        )
 
         return (
             f"당신은 {npc}입니다. {desc}\n"
@@ -996,9 +1136,11 @@ class NpcServer:
             f"{strict_rule}\n"
             f"다른 마을 사람: {others}. 이들의 이름과 직업을 절대 바꾸지 마시오 "
             "(예: mathilda를 마트닐라로 변형 금지).\n"
+            f"{player_name_hint}"
             f"{trust_hint}\n"
             f"{memory_hint}"
             "**반드시 한 문장**으로만 답하시오. 절대 길게 X. "
+            "**모르는 정보는 짧게 '모르오/못 들었소' 식으로 답** — 절대 변명하거나 길게 늘리지 X. "
             "한국어로만 답하시오. 영어/외국어/이모지/특수문자(♪✨ 등) 절대 금지."
         )
 
@@ -1015,11 +1157,31 @@ class NpcServer:
 
         t0 = time.time()
         if self.use_memory:
-            # 플레이어 발화(DIALOGUE)도 회상 가능 — "내 이름은 ~" 같은 자기소개 기억.
-            # 직전 turn의 자기 메모리 회상은 retriever의 min_similarity로 자연스럽게 필터됨.
-            retrieved = self.retrievers[npc].search(
-                user_text, k=self.retrieval_k
-            )
+            # 정체성/이름 query 감지 — semantic 매칭이 약해도 personal 메모리 우선 회상.
+            identity_kw = ["이름", "누구", "누군지", "누구신지", "기억하", "기억나"]
+            is_identity_query = any(kw in user_text for kw in identity_kw)
+
+            retrieved = []
+            if is_identity_query:
+                # 플레이어 자기소개 메모리 2개 우선 추가 (최신 우선)
+                personal = self.stores[npc].find_player_personal(limit=2)
+                retrieved.extend(personal)
+                if personal:
+                    for i, p in enumerate(personal):
+                        print(f"[respond] {npc} personal#{i+1}: {p['text'][:80]}")
+                else:
+                    print(f"[respond] {npc} identity_query → personal=(없음)")
+
+            # 일반 semantic retrieval (정체성 query면 보조, 아니면 메인)
+            semantic = self.retrievers[npc].search(user_text, k=self.retrieval_k)
+            # 중복 제거 + 결합
+            seen_ids = {r["id"] for r in retrieved}
+            for r in semantic:
+                if r["id"] not in seen_ids:
+                    retrieved.append(r)
+                if len(retrieved) >= max(self.retrieval_k, 2):
+                    break
+
             augmented = build_user_prompt(retrieved, user_text)
         else:
             retrieved = []
@@ -1051,7 +1213,7 @@ class NpcServer:
                 do_sample=True,
                 temperature=gp["temperature"],
                 top_p=0.9,
-                top_k=50,
+                top_k=gp.get("top_k", 30),
                 repetition_penalty=gp["repetition_penalty"],
                 no_repeat_ngram_size=gp["no_repeat_ngram_size"],
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
@@ -1060,6 +1222,8 @@ class NpcServer:
             out[0][inputs.shape[1]:], skip_special_tokens=True
         ).strip()
         text = _clean_response(text, npc=npc)  # emoji/특수문자/NPC별 어미 정리
+        # 플레이어 이름 변형 자동 복원 (예: "반욱헌" → "반욱현")
+        text = self._restore_player_name(text)
         latency_ms = int((time.time() - t0) * 1000)
 
         # ─────────────────────────────────────────────────────────
@@ -1203,7 +1367,7 @@ class NpcServer:
                 do_sample=True,
                 temperature=gp["temperature"],
                 top_p=0.9,
-                top_k=50,
+                top_k=gp.get("top_k", 30),
                 repetition_penalty=gp["repetition_penalty"],
                 no_repeat_ngram_size=gp["no_repeat_ngram_size"],
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
@@ -1274,7 +1438,7 @@ class NpcServer:
             {"role": "system", "content": self._build_system_prompt(npc_a)},
             {"role": "user", "content": opener_prompt},
         ]
-        first_text = self._generate_for_npc(npc_a, a_messages)
+        first_text = self._generate_for_npc(npc_a, a_messages, max_new_tokens=35)
         turns.append({"speaker": npc_a, "speaker_ko": ko_a, "text": first_text})
 
         # 각 NPC 시점의 대화 history (chat format)
@@ -1297,7 +1461,7 @@ class NpcServer:
             ko_other = ko_a if responder == npc_b else ko_b
 
             hist = b_history if responder == npc_b else a_history
-            response = self._generate_for_npc(responder, hist)
+            response = self._generate_for_npc(responder, hist, max_new_tokens=35)
             turns.append({
                 "speaker": responder, "speaker_ko": ko_responder, "text": response
             })
@@ -1449,23 +1613,36 @@ class NpcServer:
         fact_kw = ["나타났", "사라졌", "잡았", "봤", "들었", "있었", "갔다", "왔다", "했다",
                    "됐다", "당했", "보았", "만났", "들었어", "가봤", "도와", "받았"]
         has_fact = any(kw in text for kw in fact_kw)
-        # 자기소개/personal info: 이름·정체성 정보
-        personal_kw = ["내 이름", "제 이름", "이름은", "이라고 해", "이라고 한다",
-                       "라고 합니다", "라고 불러", "나는 ", "저는 ", "내가 ", "제가 "]
-        has_personal = any(kw in text for kw in personal_kw)
+        # 자기소개/personal info — 자기소개 평서문 한정 (질문 제외).
+        # "제 이름은 반욱현이에요" ✅, "제 이름 기억나시나요?" ❌ (질문)
+        personal_kw = [
+            "내 이름은", "제 이름은",        # 자기소개 평서문 (조사 '은' 포함)
+            "이라고 해", "이라고 한다",       # 자기 호칭
+            "라고 합니다", "라고 부른다", "라고 불러",
+        ]
+        # 추가: "나는 X이야" / "저는 X이에요" 패턴 (X는 단어)
+        identity_patterns = [
+            re.compile(r"^(나는|저는|내가|제가)\s+\S+(이야|이에요|입니다|예요|야)"),
+        ]
+        has_personal = (
+            any(kw in text for kw in personal_kw)
+            or any(p.search(text) for p in identity_patterns)
+        )
+        # **질문이면 personal로 분류 X** — "제 이름?" 같은 질문 잘못 저장 방지
+        if is_question:
+            has_personal = False
 
         # importance 매핑 — 평서문은 모두 전파 후보(threshold 7+) 보장.
-        # 프로젝트 핵심: "플레이어 → A 발화" → propagation → "B가 알고 대화 이어감".
         if has_personal:
-            importance = 10  # 자기소개: 최우선 회상 + 강한 전파
+            importance = 10  # 자기소개 평서문: 최우선 회상
         elif is_question:
-            importance = 4   # 질문은 전파 X
+            importance = 4   # 질문은 전파 X + personal X
         elif has_fact:
-            importance = 9   # 사실 보고: 시드보다 강하게 전파
+            importance = 9
         elif len(text) >= 15:
-            importance = 8   # 일반 평서문: 전파 후보 보장 (6→8)
+            importance = 8
         else:
-            importance = 7   # 짧은 평서문: 전파 후보 진입 (5→7)
+            importance = 7
 
         entry = MemoryEntry(
             id=f"dlg_{uuid.uuid4().hex[:8]}",
@@ -1479,6 +1656,54 @@ class NpcServer:
             },
         )
         self.stores[npc].add(entry)
+
+        # 플레이어 이름 자동 추출 → 응답 시 LLM에게 정확히 전달 + 후처리 자동 복원
+        if has_personal and not is_question:
+            extracted = self._extract_player_name(text)
+            if extracted:
+                self.player_name = extracted
+
+    def _restore_player_name(self, text: str) -> str:
+        """응답에서 플레이어 이름 변형(반욱헌, 반울현 등)을 정확한 이름으로 복원."""
+        if not self.player_name or len(self.player_name) < 2:
+            return text
+        name = self.player_name
+        n = len(name)
+        # 같은 길이 + 1글자만 다른 모든 변형 후보 자동 검출 + 정정
+        # 한글 이름이면 길이 같고 첫/마지막 글자 같은 변형이 흔함
+        import re as _re
+        pattern = _re.compile(rf"\b([가-힣]){{{n}}}\b")
+        def _replace(m):
+            cand = m.group(0)
+            if cand == name:
+                return cand
+            # 1글자 차이만 정정
+            diff = sum(1 for a, b in zip(cand, name) if a != b)
+            if diff == 1:
+                # 첫 글자가 같은 경우 (반욱헌 vs 반욱현 — 첫 글자 "반" 같음)
+                if cand[0] == name[0]:
+                    return name
+            return cand
+        return pattern.sub(_replace, text)
+
+    @staticmethod
+    def _extract_player_name(text: str) -> str | None:
+        """플레이어 자기소개에서 이름 추출. 2-6자 한글/영문 단어."""
+        patterns = [
+            r"(?:내|제)\s*이름은\s+([가-힣A-Za-z]{2,6})",
+            r"^(?:나|저)는\s+([가-힣A-Za-z]{2,6})(?:이야|이에요|입니다|예요|야|이라|라)",
+            r"^(?:내가|제가)\s+([가-힣A-Za-z]{2,6})(?:이야|이에요|입니다)",
+            r"([가-힣A-Za-z]{2,6})(?:이|)라고\s+(?:해|합니다|불러)",
+        ]
+        for p in patterns:
+            m = re.search(p, text)
+            if m:
+                name = m.group(1).strip()
+                # 일반 명사 제외 (이름 아닌 단어)
+                if name in {"학생", "모험가", "사람", "여기", "거기", "그냥", "한번"}:
+                    continue
+                return name
+        return None
 
     # ---------- PropagationSimulator transformer 인터페이스 ----------
     def transform(

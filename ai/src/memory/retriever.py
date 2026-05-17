@@ -25,7 +25,7 @@ class MemoryRetriever:
         w_sim=0.70,
         w_imp=0.10,
         w_rec=0.20,
-        min_similarity: float = 0.50,
+        min_similarity: float = 0.55,
         propagation_bonus: float = 0.05,
     ):
         """가중점수: w_sim*sim + w_imp*imp + w_rec*recency + propagation_bonus(if propagation).
@@ -51,6 +51,7 @@ class MemoryRetriever:
         k: int = 5,
         pool: int = 20,
         exclude_sources: set[str] | None = None,
+        min_importance: int = 5,
     ):
         """pool개 후보 중 의미 유사도 임계값 이상 + 가중 점수 상위 k개 반환.
 
@@ -58,14 +59,13 @@ class MemoryRetriever:
         예: "안녕하세요"는 어떤 메모리와도 충분히 유사하지 않아 빈 리스트 반환 →
         LoRA는 평소 인사 패턴으로 응답.
 
-        짧은 query (8자 미만) — 인사·감탄사·단답류는 회상 자체를 스킵.
-        이런 query는 generic Korean baseline noise로 임계값 통과해도 의미 매칭 약하고,
-        회상 컨텍스트가 단답·무뚝뚝 페르소나(hermann)를 깨뜨리는 부작용 더 큼.
+        짧은 query (4자 미만) — 매우 짧은 감탄사만 회상 skip.
+        "내 이름?" 같은 짧은 질문도 회상 가능하도록 4자로 완화.
 
         exclude_sources: 특정 소스 (예: 'dialogue') 메모리는 결과에서 제외.
         본인이 한 말을 그대로 회상하는 어색한 루프 방지용.
         """
-        if len(query.strip()) < 8:
+        if len(query.strip()) < 4:
             return []
         results = self.store.query(query, k=pool)
         ids = results["ids"][0]
@@ -81,10 +81,14 @@ class MemoryRetriever:
         for id_, doc, meta, dist in zip(ids, docs, metas, dists):
             if exclude_sources and meta.get("source") in exclude_sources:
                 continue
+            # importance 임계값 — 질문(imp 4)이나 잡담 메모리 제외
+            mem_imp = int(meta.get("importance", 5))
+            if mem_imp < min_importance:
+                continue
             sim = max(0.0, 1.0 - dist)
             if sim < self.min_similarity:
                 continue
-            imp = float(meta.get("importance", 5)) / 10.0
+            imp = float(mem_imp) / 10.0
 
             ts = _parse_ts(meta.get("timestamp", ""))
             if ts is None:
@@ -103,6 +107,9 @@ class MemoryRetriever:
             # propagation 소스 보너스 — 다른 NPC한테 들은 정보가 더 잘 떠오름
             if meta.get("source") == "propagation":
                 score += self.propagation_bonus
+            # 플레이어 직접 발화 보너스 — 플레이어 정보(이름·사건 등)는 우선 회상
+            if meta.get("player") is True:
+                score += 0.15
             scored.append({
                 "id": id_,
                 "text": doc,
