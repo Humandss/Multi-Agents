@@ -65,18 +65,16 @@ class MemoryStore:
         return self.collection.get(include=["documents", "metadatas"])
 
     def find_player_personal(self, limit: int = 5) -> list[dict]:
-        """플레이어 자기소개 메모리만 검색 (has_personal=True + player=True).
+        """플레이어 자기소개 메모리 검색.
 
-        ChromaDB $and 필터가 버전별로 다를 수 있어 player=True만 필터 + Python 후필터.
+        직접 발화(player=True) + propagation으로 받은 plyaer 정보(player_origin=True)
+        둘 다 검색. has_personal=True 메타로 필터.
         """
+        # 전체 조회 후 Python 필터 — ChromaDB where 절 호환성 회피.
         try:
-            data = self.collection.get(
-                where={"player": True},
-                include=["documents", "metadatas"],
-            )
-        except Exception:
-            # where 절 실패 시 전체 조회 후 Python 필터
             data = self.collection.get(include=["documents", "metadatas"])
+        except Exception:
+            return []
 
         ids = data.get("ids", [])
         docs = data.get("documents", [])
@@ -85,8 +83,9 @@ class MemoryStore:
         results = []
         for i, mid in enumerate(ids):
             meta = metas[i] if i < len(metas) else {}
-            # 후필터: player + has_personal
-            if not meta.get("player"):
+            # 직접 plyaer 발화 OR propagation으로 받은 plyaer 정보
+            is_player_related = bool(meta.get("player")) or bool(meta.get("player_origin"))
+            if not is_player_related:
                 continue
             if not meta.get("has_personal"):
                 continue
@@ -175,9 +174,17 @@ class MemoryStore:
         # 보존:
         # 1) preserve_sources (seed)
         # 2) 플레이어 직접 발화 (metadata.player=True)
-        # 3) 플레이어 정보 propagation (text에 "플레이어가" 포함) — 다른 NPC가 plyaer 알게 함
+        # 3) 플레이어 정보 propagation (player_origin=True 또는 텍스트에 "플레이어가" 포함)
         def _is_player_propagation(e):
-            return "플레이어가" in (docs[ids.index(e["id"])] if e["id"] in ids else "")
+            mid = e["id"]
+            idx = ids.index(mid) if mid in ids else -1
+            if idx < 0:
+                return False
+            meta = metas[idx] if idx < len(metas) else {}
+            if meta.get("player_origin"):
+                return True
+            doc = docs[idx] if idx < len(docs) else ""
+            return "플레이어가" in doc
 
         preserved = [e for e in entries
                      if e["source"] in preserve_sources

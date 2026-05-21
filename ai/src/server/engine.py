@@ -31,11 +31,12 @@ _BRACKET_NOISE = re.compile(r"\[[^\[\]]{1,15}\]")  # [이옵니다], [^-^], [리
 
 # 영문 NPC 이름 → 한글 표기 (system prompt에서 영문 이름 사용해서 응답에 leak되는 문제 해결)
 _NAME_NORMALIZE = [
-    (re.compile(r"\b[Hh]err?mann\b"), "헤르만"),
-    (re.compile(r"\b[Mm]athilda\b"), "마틸다"),
-    (re.compile(r"\b[Bb]ernhardt\b"), "베른하르트"),
-    (re.compile(r"\b[Ee]lias\b"), "엘리아스"),
-    (re.compile(r"\b[Ff]inn\b"), "핀"),
+    # 영문 이름 — lookaround로 한글-영문 경계도 매칭 ("hermann님" 같은 leak 잡기)
+    (re.compile(r"(?<![a-zA-Z])[Hh]err?mann(?![a-zA-Z])"), "헤르만"),
+    (re.compile(r"(?<![a-zA-Z])[Mm]athilda(?![a-zA-Z])"), "마틸다"),
+    (re.compile(r"(?<![a-zA-Z])[Bb]ernhardt(?![a-zA-Z])"), "베른하르트"),
+    (re.compile(r"(?<![a-zA-Z])[Ee]lias(?![a-zA-Z])"), "엘리아스"),
+    (re.compile(r"(?<![a-zA-Z])[Ff]inn(?![a-zA-Z])"), "핀"),
     # 한글 변형도 통일
     (re.compile(r"베르나르드|베르나르트|베른하르크|베른하르타르"), "베른하르트"),
     (re.compile(r"마트닐라|마트일다|수학틸라|수학틸다|마틸달라|마틸 다라"), "마틸다"),
@@ -335,6 +336,21 @@ _NPC_POSTFIX = {
         # 잘못된 주체 사극체 (사용자가 주체일 때 "(어휘)셨으니까")
         (re.compile(r"못하셨으니까\b"), "못했으니까"),
         (re.compile(r"못하셨으니\b"), "못했으니"),
+        # 반말 leak → 친근 존댓말 (Mathilda는 ~어요/~네요/~죠)
+        (re.compile(r"들었니\?"), "들으셨어요?"),
+        (re.compile(r"있니\?"), "있어요?"),
+        (re.compile(r"가니\?"), "가세요?"),
+        (re.compile(r"오니\?"), "오세요?"),
+        (re.compile(r"([가-힣])니\?"), lambda m: m.group(1) + "어요?"),
+        # 응답 끝 반말 → "~에요/~어요"
+        (re.compile(r"안심이야(?=[\s.,!?]|$)"), "안심이에요"),
+        (re.compile(r"걱정이야(?=[\s.,!?]|$)"), "걱정이에요"),
+        (re.compile(r"([가-힣])이야(?=[\s.,!?]|$)"), lambda m: m.group(1) + "이에요"),
+        (re.compile(r"([가-힣])이지(?=[\s.,!?]|$)"), lambda m: m.group(1) + "이죠"),
+        # "없대" / "있대" 같은 어색한 줄임 → 자연
+        (re.compile(r"없대\s+보이는데"), "없어 보이는데"),
+        (re.compile(r"있대\s+보이는데"), "있어 보이는데"),
+        (re.compile(r"([가-힣])대\s+보이는데"), lambda m: m.group(1) + "어 보이는데"),
         # mathilda는 "~네요/~죠/~어요" 자연. "~십니까" 어색 → "~세요"
         (re.compile(r"([가-힣])십니까\?"), lambda m: m.group(1) + "세요?"),
         (re.compile(r"([가-힣])십니까\b"), lambda m: m.group(1) + "세요"),
@@ -360,6 +376,8 @@ _NPC_POSTFIX = {
     ],
     "hermann": [
         # hermann은 반말. 존댓말 leak 시 반말로 강제.
+        # 0) 응답 시작 정중 감탄사 → "어"
+        (re.compile(r"^(네|예|네네|예예)([\s,]+)"), r"어\2"),
         # 1) 흔한 정중 표현 → 반말
         (re.compile(r"아니요\b"), "아니"),
         (re.compile(r"아니에요\b"), "아니"),
@@ -370,6 +388,32 @@ _NPC_POSTFIX = {
         (re.compile(r"감사해요\b"), "고맙다"),
         (re.compile(r"미안해요\b"), "미안"),
         (re.compile(r"괜찮아요\b"), "괜찮아"),
+        # 1-2) "(어휘)했습니다/했어요" → "(어휘)했어"
+        (re.compile(r"([가-힣])했습니다\b"), lambda m: m.group(1) + "했어"),
+        (re.compile(r"([가-힣])했어요\b"), lambda m: m.group(1) + "했어"),
+        (re.compile(r"([가-힣])했네요\b"), lambda m: m.group(1) + "했네"),
+        # "할 겁니다 / 할 거예요" → "할 거야"
+        (re.compile(r"할\s+겁니다\b"), "할 거야"),
+        (re.compile(r"할\s+거예요\b"), "할 거야"),
+        (re.compile(r"할\s+거에요\b"), "할 거야"),
+        # "(동사)할게요" → "(동사)할게" (드릴게요는 별도 위에 있음)
+        (re.compile(r"([가-힣])할게요\b"), lambda m: m.group(1) + "할게"),
+        # "보시고요/봐요" → "봐"
+        (re.compile(r"보시고요\b"), "봐"),
+        (re.compile(r"보세요\b"), "봐"),
+        # "골라보시죠 / ~보시죠" → "골라봐 / ~봐"
+        (re.compile(r"([가-힣])보시죠\b"), lambda m: m.group(1) + "봐"),
+        # "(어휘)준비돼 있으니/있으니까" → "(어휘)있어"
+        (re.compile(r"준비돼\s+있으니까?\b"), "준비돼 있어"),
+        # "말씀하십라" / "말씀하세요" — Hermann은 단순 "말해"
+        (re.compile(r"말씀하십라\b"), "말해"),
+        (re.compile(r"말씀하세요\b"), "말해"),
+        (re.compile(r"말씀해\s*주십시오\b"), "말해줘"),
+        # "추천드릴게요/추천할게요" → "추천할게"
+        (re.compile(r"추천드릴게요\b"), "추천할게"),
+        (re.compile(r"추천할게요\b"), "추천할게"),
+        # "(어휘)네요" → "(어휘)네"
+        (re.compile(r"([가-힣])네요\b"), lambda m: m.group(1) + "네"),
         # 부드러운 반말 어미 "(어휘)구나" → 거친 반말 "(어휘)다" / "(어휘)네"
         (re.compile(r"고맙구나\b"), "고맙다"),
         (re.compile(r"미안하구나\b"), "미안하다"),
@@ -377,6 +421,35 @@ _NPC_POSTFIX = {
         (re.compile(r"그렇구나\b"), "그렇네"),
         (re.compile(r"([가-힣])이구나\b"), lambda m: m.group(1) + "이네"),
         (re.compile(r"([가-힣])는구나\b"), lambda m: m.group(1) + "는다"),
+        # 명사형 종결 (사실 보고체) → 반말 동사형
+        (re.compile(r"진행\s+중임\b"), "진행 중이야"),
+        (re.compile(r"([가-힣])\s+중임\b"), lambda m: m.group(1) + " 중이야"),
+        (re.compile(r"([가-힣])많아짐\b"), lambda m: m.group(1) + "많아"),
+        (re.compile(r"많아짐\b"), "많아졌어"),
+        (re.compile(r"적어짐\b"), "적어졌어"),
+        (re.compile(r"늘어남\b"), "늘었어"),
+        (re.compile(r"줄어듦\b"), "줄었어"),
+        (re.compile(r"([가-힣])됨\b"), lambda m: m.group(1) + "돼"),
+        (re.compile(r"([가-힣])함\b(?!수)"), lambda m: m.group(1) + "해"),
+        # 명사형 종결 + 마침표 ("진행함." 같은 패턴)
+        (re.compile(r"([가-힣])됨\."), lambda m: m.group(1) + "돼."),
+        (re.compile(r"([가-힣])함\."), lambda m: m.group(1) + "해."),
+        # "(어휘)하길" / "(어휘)길" 어색한 명령형 → 거친 반말
+        (re.compile(r"경계하길\b"), "조심해"),
+        (re.compile(r"조심하길\b"), "조심해"),
+        (re.compile(r"확인하길\b"), "확인해"),
+        (re.compile(r"([가-힣])하길\b"), lambda m: m.group(1) + "해"),
+        (re.compile(r"([가-힣])시길\b"), lambda m: m.group(1) + "해"),
+        # 일반 "(어휘)길\.?" 어미 (마침표 앞)
+        (re.compile(r"([가-힣])길(?=[\s.,!?]|$)"), lambda m: m.group(1) + "라"),
+        # 사극체 leak (Hermann은 거친 반말)
+        (re.compile(r"무슨 일인고\?"), "무슨 일이야?"),
+        (re.compile(r"무슨 일인고\b"), "무슨 일이야"),
+        (re.compile(r"([가-힣])인고\?"), lambda m: m.group(1) + "이야?"),
+        (re.compile(r"([가-힣])인고\b"), lambda m: m.group(1) + "이야"),
+        (re.compile(r"([가-힣])이오\b"), lambda m: m.group(1) + "이야"),
+        (re.compile(r"([가-힣])하오\b"), lambda m: m.group(1) + "해"),
+        (re.compile(r"([가-힣])소이다\b"), lambda m: m.group(1) + "어"),
         # 2) 합니다/입니다 류
         (re.compile(r"하세요\b"), "해"),
         (re.compile(r"드릴게요\b"), "줄게"),
@@ -587,12 +660,12 @@ NPC_STRICT_RULES = {
 # - bernhardt: 정중한 거래상 → 중간
 # 속도 우선 — 한두 문장이면 충분. 페르소나도 더 자연스러움.
 GEN_PARAMS = {
-    # 모든 NPC max 40으로 통일 — 한 문장 자연스러움 + 속도 균형.
-    "hermann":   {"temperature": 0.35, "max_new_tokens": 40, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4, "top_k": 30},
-    "elias":     {"temperature": 0.35, "max_new_tokens": 40, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4, "top_k": 30},
-    "mathilda":  {"temperature": 0.50, "max_new_tokens": 40, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4, "top_k": 30},
-    "finn":      {"temperature": 0.45, "max_new_tokens": 40, "repetition_penalty": 1.18, "no_repeat_ngram_size": 3, "top_k": 30},
-    "bernhardt": {"temperature": 0.40, "max_new_tokens": 40, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4, "top_k": 30},
+    # max 50으로 약간 여유 — 여러 메모리 통합 응답 위해 + 한두 문장 가능.
+    "hermann":   {"temperature": 0.35, "max_new_tokens": 50, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4, "top_k": 30},
+    "elias":     {"temperature": 0.35, "max_new_tokens": 55, "repetition_penalty": 1.20, "no_repeat_ngram_size": 4, "top_k": 30},
+    "mathilda":  {"temperature": 0.50, "max_new_tokens": 55, "repetition_penalty": 1.15, "no_repeat_ngram_size": 4, "top_k": 30},
+    "finn":      {"temperature": 0.45, "max_new_tokens": 55, "repetition_penalty": 1.18, "no_repeat_ngram_size": 3, "top_k": 30},
+    "bernhardt": {"temperature": 0.40, "max_new_tokens": 50, "repetition_penalty": 1.18, "no_repeat_ngram_size": 4, "top_k": 30},
 }
 
 # NPC별 Quest Pool — 미리 정의된 quest. 조건(trust 등) 충족 시 NPC가 먼저 제안.
@@ -905,6 +978,22 @@ JSON 한 개만 출력하시오 (다른 설명 절대 금지, 한국어로):
 
 JSON:"""
 
+REFLECTION_PROMPT = """다음은 {npc}({role})의 최근 기억들이오.
+
+{memories}
+
+위 기억들에서 가장 중요한 통찰 3가지를 한 문장씩 한국어로 추출하시오.
+사람 이름·장소 이름은 절대 바꾸지 말고 그대로 사용.
+각 문장은 20-40자 내외, 1인칭으로 짧고 명확하게.
+
+형식:
+1. ...
+2. ...
+3. ...
+
+추출:"""
+
+
 PROMPT_DIALOGUE = (
     "플레이어가 너에게 다음과 같이 말했다. 이 말에 담긴 사실 정보를 다른 마을 사람에게 "
     "한 마디로 전달한다면 어떻게 말할지 한 줄로만 답하세요. "
@@ -995,7 +1084,7 @@ class NpcServer:
         chroma_dir: Path,
         relations_path: Path | None = None,
         characters: list[str] | None = None,
-        retrieval_k: int = 1,  # 3 → 1: 회상 컨텍스트 줄여 페르소나 안정화
+        retrieval_k: int = 2,  # 1→2: 여러 메모리 통합 응답 (시드 + reflection 활용도 ↑)
         use_lora: bool = False,  # LoRA 폐기 결정 후 default False. ablation용으로 True 가능.
         use_memory: bool = False,  # 회상 비활성 default. 단계적 접근: 페르소나만 → 메모리 → 전파.
     ):
@@ -1124,8 +1213,11 @@ class NpcServer:
         strict_rule = NPC_STRICT_RULES.get(npc, "")
         trust_hint = self.trust.disclosure_hint(npc)
         player_name_hint = (
-            f"**플레이어 이름은 '{self.player_name}'**. "
-            f"정확히 '{self.player_name}'으로만 부르고, 글자 변형(예: 발음 비슷한 다른 글자) 절대 X. "
+            f"**플레이어(지금 대화 중인 모험가)의 이름은 정확히 '{self.player_name}'**. "
+            f"이게 확정된 이름. 절대 다른 변형(반응현/반욱헌 등) 사용 X. "
+            f"플레이어가 '아니고' '아니야' 같은 부정문으로 정정해도, "
+            f"플레이어가 직접 알려준 '{self.player_name}'가 정답. "
+            f"플레이어를 '{self.player_name}'으로만 부르고, 다른 사람 이름과 헷갈리지 X. "
             if self.player_name else ""
         )
 
@@ -1179,8 +1271,36 @@ class NpcServer:
             for r in semantic:
                 if r["id"] not in seen_ids:
                     retrieved.append(r)
-                if len(retrieved) >= max(self.retrieval_k, 2):
-                    break
+                    seen_ids.add(r["id"])
+
+            # 키워드 기반 추가 검색 — query에 명사 키워드 있으면 그 단어 포함 메모리도 회상
+            event_kw = ["곰", "용", "광산", "광장", "마법사", "약초", "검",
+                        "위험", "사건", "사고", "곰의", "괴물"]
+            query_kw = [kw for kw in event_kw if kw in user_text]
+            if query_kw:
+                all_data = self.stores[npc].all()
+                ids, docs, metas = (all_data.get("ids", []),
+                                    all_data.get("documents", []),
+                                    all_data.get("metadatas", []))
+                for i, mid in enumerate(ids):
+                    if mid in seen_ids:
+                        continue
+                    doc = docs[i] if i < len(docs) else ""
+                    meta = metas[i] if i < len(metas) else {}
+                    if int(meta.get("importance", 5)) < 5:
+                        continue
+                    # 키워드 매칭
+                    if any(kw in doc for kw in query_kw):
+                        retrieved.append({
+                            "id": mid, "text": doc,
+                            "importance": int(meta.get("importance", 5)),
+                            "metadata": meta,
+                            "similarity": 0.7,  # 키워드 매칭은 강한 신호
+                            "score": 0.7,
+                        })
+                        seen_ids.add(mid)
+                        if len(retrieved) >= 3:
+                            break
 
             augmented = build_user_prompt(retrieved, user_text)
         else:
@@ -1342,6 +1462,116 @@ class NpcServer:
 
         # Quest 없으면 일반 greeting
         return {"text": self.get_greeting(npc), "quest": None}
+
+    # ---------- Reflection (Park et al. 2023 스타일 추상화) ----------
+    def reflect(self, npc: str, recent_n: int = 25, min_importance_sum: int = 80) -> dict:
+        """NPC의 최근 메모리에서 LLM으로 추상화된 통찰 3개 추출.
+
+        Park et al. Generative Agents의 Reflection 컴포넌트.
+        - 최근 N개 메모리의 importance 합계가 임계값 미만이면 skip
+        - LLM에게 "핵심 통찰 3가지" 추출 요청
+        - 추출된 통찰을 REFLECTION source, importance 9로 저장
+
+        반환: {"npc": npc, "reflections": [list of str], "skipped": bool}
+        """
+        if npc not in self.characters:
+            return {"npc": npc, "reflections": [], "skipped": True, "reason": "unknown npc"}
+
+        # 최근 메모리 가져오기 (ChromaDB의 all() 사용)
+        all_data = self.stores[npc].all()
+        ids = all_data.get("ids", [])
+        docs = all_data.get("documents", [])
+        metas = all_data.get("metadatas", [])
+
+        entries = []
+        for i, mid in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            # reflection 자체는 다시 reflect 대상에서 제외
+            if meta.get("source") == "reflection":
+                continue
+            entries.append({
+                "id": mid,
+                "text": docs[i] if i < len(docs) else "",
+                "importance": int(meta.get("importance", 5)),
+                "timestamp": meta.get("timestamp", ""),
+            })
+
+        # 최신 N개 (timestamp 내림차순)
+        entries.sort(key=lambda e: e["timestamp"], reverse=True)
+        recent = entries[:recent_n]
+
+        if not recent:
+            return {"npc": npc, "reflections": [], "skipped": True, "reason": "no memories"}
+
+        # importance 합 임계값 검사
+        imp_sum = sum(e["importance"] for e in recent)
+        if imp_sum < min_importance_sum:
+            return {"npc": npc, "reflections": [], "skipped": True, "reason": f"imp_sum {imp_sum} < {min_importance_sum}"}
+
+        # 메모리 텍스트 정리 (각 줄 한 메모리)
+        mem_lines = []
+        for i, e in enumerate(recent[:20], 1):
+            mem_lines.append(f"{i}. {e['text'][:120]}")
+        memories_text = "\n".join(mem_lines)
+
+        role_brief = (
+            self.personas.get(npc, {}).get("description", "").split(".")[0].strip()
+        )
+        prompt = REFLECTION_PROMPT.format(
+            npc=npc, role=role_brief, memories=memories_text,
+        )
+
+        # LLM 호출
+        messages = [{"role": "user", "content": prompt}]
+        inputs = self.tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            out = self.model.generate(
+                inputs,
+                max_new_tokens=150,
+                do_sample=False,  # 통찰 추출은 deterministic
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            )
+        raw = self.tokenizer.decode(
+            out[0][inputs.shape[1]:], skip_special_tokens=True
+        ).strip()
+
+        # 응답 파싱: "1. ...", "2. ...", "3. ..." 패턴
+        reflections = []
+        for line in raw.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            m = re.match(r"^[1-9][\.\)]\s*(.+)$", line)
+            if m:
+                insight = m.group(1).strip()
+                if 8 <= len(insight) <= 100:  # 길이 제한 (너무 짧/길면 잘못 추출)
+                    reflections.append(insight)
+            if len(reflections) >= 3:
+                break
+
+        # 메모리로 저장
+        for i, insight in enumerate(reflections):
+            insight_clean = _clean_response(insight, npc=npc)
+            entry = MemoryEntry(
+                id=f"refl_d{self.day}_{uuid.uuid4().hex[:8]}",
+                text=insight_clean,
+                importance=9,  # 추상 통찰은 importance 9
+                timestamp=datetime.now(timezone.utc),
+                source=MemorySource.REFLECTION,
+                metadata={"day": self.day, "source_count": len(recent)},
+            )
+            self.stores[npc].add(entry)
+
+        return {
+            "npc": npc,
+            "reflections": reflections,
+            "skipped": False,
+            "imp_sum": imp_sum,
+            "source_memories": len(recent),
+        }
 
     # ---------- NPC-NPC 자율 대화 (Park et al. 2023 스타일) ----------
     def _generate_for_npc(
@@ -1609,9 +1839,12 @@ class NpcServer:
         is_question = "?" in text or any(
             text.endswith(suf) for suf in ["어요", "지요", "나요", "까", "야"]
         )
-        # 사실 보고 키워드 (강한 fact 신호)
+        # 사실 보고 키워드 (강한 fact 신호) — 다양한 활용형 포함
         fact_kw = ["나타났", "사라졌", "잡았", "봤", "들었", "있었", "갔다", "왔다", "했다",
-                   "됐다", "당했", "보았", "만났", "들었어", "가봤", "도와", "받았"]
+                   "됐다", "당했", "보았", "만났", "들었어", "가봤", "도와", "받았",
+                   "갔는", "있어요", "있더", "봤어", "갔었", "왔어", "혔어",  # 활용형
+                   "곰", "용", "괴물", "광산", "광장", "사고", "사건",  # 사물/장소 키워드
+                   "위험", "이상한", "수상한"]
         has_fact = any(kw in text for kw in fact_kw)
         # 자기소개/personal info — 자기소개 평서문 한정 (질문 제외).
         # "제 이름은 반욱현이에요" ✅, "제 이름 기억나시나요?" ❌ (질문)
@@ -1664,27 +1897,34 @@ class NpcServer:
                 self.player_name = extracted
 
     def _restore_player_name(self, text: str) -> str:
-        """응답에서 플레이어 이름 변형(반욱헌, 반울현 등)을 정확한 이름으로 복원."""
+        """응답에서 플레이어 이름 변형(반욱헌, 반응현 등)을 정확한 이름으로 복원."""
         if not self.player_name or len(self.player_name) < 2:
             return text
         name = self.player_name
         n = len(name)
-        # 같은 길이 + 1글자만 다른 모든 변형 후보 자동 검출 + 정정
-        # 한글 이름이면 길이 같고 첫/마지막 글자 같은 변형이 흔함
         import re as _re
-        pattern = _re.compile(rf"\b([가-힣]){{{n}}}\b")
+        # 한글 경계 (\b는 한글에 안 통함) — lookahead/lookbehind 사용
+        pattern = _re.compile(rf"(?<![가-힣])([가-힣]{{{n}}})(?![가-힣])")
         def _replace(m):
-            cand = m.group(0)
+            cand = m.group(1)
             if cand == name:
                 return cand
-            # 1글자 차이만 정정
+            # 1글자 차이 → 일반 명사가 아니면 정정 (이름 변형 추정)
             diff = sum(1 for a, b in zip(cand, name) if a != b)
             if diff == 1:
-                # 첫 글자가 같은 경우 (반욱헌 vs 반욱현 — 첫 글자 "반" 같음)
-                if cand[0] == name[0]:
-                    return name
+                # 일반 명사 후보 — 변형 같지만 다른 단어일 가능성. 보수적으로 정정.
+                # 같은 위치 글자가 n-1개 일치하면 거의 이름 변형
+                return name
+            # 띄어쓰기로 분리된 변형 ("반응 현" 등)은 다른 곳에서 처리
             return cand
-        return pattern.sub(_replace, text)
+        out = pattern.sub(_replace, text)
+        # 추가: 띄어쓰기로 분리된 이름 변형 ("반욱 현" 같은 leak)
+        if n >= 2:
+            # "반욱현" → r"반\s*욱\s*현" 패턴 생성 (각 글자 사이 공백 허용)
+            spaced_inner = r"\s*".join(name)
+            spaced_pattern = _re.compile(rf"(?<![가-힣])({spaced_inner})(?![가-힣])")
+            out = spaced_pattern.sub(name, out)
+        return out
 
     @staticmethod
     def _extract_player_name(text: str) -> str | None:
@@ -1805,21 +2045,32 @@ class NpcServer:
                 except Exception as e:
                     print(f"[tick] NPC-NPC 대화 실패: {e}")
 
-        # 3단계: 메모리 정리 — NPC별 최대 보유 메모리 제한 (속도 유지)
-        # seed는 보존, importance 낮고 오래된 것부터 삭제.
+        # 3단계: Reflection — 매 tick 1 NPC씩 추상화 (rotating)
+        # day % len(characters)로 순환. 5종 NPC면 5 tick에 한 사이클.
+        reflection_result = None
+        try:
+            npc_to_reflect = self.characters[(day - 1) % len(self.characters)]
+            reflection_result = self.reflect(npc_to_reflect)
+            if reflection_result.get("reflections"):
+                print(f"[tick] {npc_to_reflect} reflection: {len(reflection_result['reflections'])}개 통찰 추출")
+        except Exception as e:
+            print(f"[tick] reflection 실패: {e}")
+
+        # 4단계: 메모리 정리 — NPC별 최대 보유 메모리 제한
         pruned_total = 0
         for npc in self.characters:
             try:
-                pruned_total += self.stores[npc].prune(max_keep=60)
+                pruned_total += self.stores[npc].prune(max_keep=80)
             except Exception as e:
                 print(f"[tick] {npc} 메모리 정리 실패: {e}")
         if pruned_total > 0:
-            print(f"[tick] 메모리 정리: 총 {pruned_total}개 삭제 (NPC당 60개 유지)")
+            print(f"[tick] 메모리 정리: 총 {pruned_total}개 삭제")
 
         return {
             "day": day,
             "events": events,
             "conversation": conversation_result,
+            "reflection": reflection_result,
         }
 
     def memory_counts(self) -> dict[str, int]:

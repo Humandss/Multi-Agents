@@ -86,6 +86,22 @@ def create_app() -> FastAPI:
         except Exception as e:
             print(f"[app] reset 실패: {e}")
 
+    # --prime N 옵션: 시작 후 N tick 자동 실행 (디버그용)
+    prime_ticks = int(_os.environ.get("NPC_PRIME_TICKS", "0") or "0")
+    if prime_ticks > 0:
+        print(f"[app] --prime {prime_ticks} — {prime_ticks} tick 자동 실행 중...")
+        for i in range(prime_ticks):
+            try:
+                result = engine.tick(npc_conversation=True, npc_conversation_turns=1, fast=True)
+                refl = result.get("reflection", {})
+                refl_count = len(refl.get("reflections", [])) if refl else 0
+                print(f"[app] prime tick {i+1}: events={len(result.get('events', []))}, "
+                      f"conversation={'O' if result.get('conversation') else 'X'}, "
+                      f"reflection={refl_count}")
+            except Exception as e:
+                print(f"[app] prime tick {i+1} 실패: {e}")
+        print(f"[app] prime 완료 — Day {engine.day}. 메모리: {engine.memory_counts()}")
+
     print("[app] 준비 완료")
     app.state.engine = engine
 
@@ -226,6 +242,73 @@ def create_app() -> FastAPI:
             "reseeded_memories": reseeded,
             "memory_counts": engine.memory_counts(),
         })
+
+    @app.post("/debug/prime")
+    def prime_simulation(ticks: int = 3):
+        """디버그용: 게임 시작 직후 호출하면 N tick 자동 실행.
+
+        - propagation으로 시드 메모리가 NPC들 간 전파됨
+        - 자율 대화로 NPC-NPC 대화 누적
+        - 매 tick rotating reflection 트리거
+        결과: Day {ticks} 상태로 점프. 사용자가 게임 들어가면 이미 정보 흐름 있음.
+        """
+        results = []
+        for i in range(ticks):
+            try:
+                result = engine.tick(npc_conversation=True, npc_conversation_turns=1, fast=True)
+                results.append({
+                    "day": result["day"],
+                    "events": len(result.get("events", [])),
+                    "conversation": bool(result.get("conversation")),
+                    "reflection": result.get("reflection", {}).get("reflections", []) if result.get("reflection") else [],
+                })
+            except Exception as e:
+                results.append({"day": engine.day, "error": str(e)})
+
+        return JSONResponse({
+            "ticks_executed": ticks,
+            "final_day": engine.day,
+            "tick_results": results,
+            "memory_counts": {display(k): v for k, v in engine.memory_counts().items()},
+        })
+
+    @app.post("/reflect/{npc}")
+    def reflect_npc(npc: str):
+        """특정 NPC에게 reflection 강제 실행 (Park et al. style abstraction)."""
+        npc_id = normalize(npc)
+        if npc_id not in engine.characters:
+            return JSONResponse({"error": "unknown npc"}, status_code=404)
+        try:
+            result = engine.reflect(npc_id, min_importance_sum=0)  # 강제 — 임계값 무시
+            result["npc"] = display(npc_id)
+            return JSONResponse(result)
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/memory/reflections/{npc}")
+    def list_reflections(npc: str):
+        """특정 NPC의 reflection 메모리 전체 (시연용)."""
+        npc_id = normalize(npc)
+        if npc_id not in engine.characters:
+            return JSONResponse({"error": "unknown npc"}, status_code=404)
+        all_data = engine.stores[npc_id].all()
+        ids = all_data.get("ids", [])
+        docs = all_data.get("documents", [])
+        metas = all_data.get("metadatas", [])
+        reflections = []
+        for i, mid in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            if meta.get("source") != "reflection":
+                continue
+            reflections.append({
+                "id": mid,
+                "text": docs[i] if i < len(docs) else "",
+                "importance": int(meta.get("importance", 5)),
+                "day": meta.get("day", 0),
+                "timestamp": meta.get("timestamp", ""),
+            })
+        reflections.sort(key=lambda r: r["timestamp"], reverse=True)
+        return JSONResponse({"npc": display(npc_id), "reflections": reflections})
 
     @app.get("/memory/player/{npc}")
     def player_memories(npc: str):

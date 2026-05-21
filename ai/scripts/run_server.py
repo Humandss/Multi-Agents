@@ -21,6 +21,8 @@ def main():
     parser.add_argument("--reload", action="store_true")
     parser.add_argument("--no-reset", action="store_true",
                         help="기존 ChromaDB 메모리 유지 (기본은 매번 reset + 시드 재적재)")
+    parser.add_argument("--prime", type=int, default=3, metavar="N",
+                        help="시작 시 N tick 자동 실행 (기본 3). 끄려면 --prime 0")
     args = parser.parse_args()
 
     # 기본 동작: 매번 reset + 시드 재적재. --no-reset 시 보존.
@@ -30,6 +32,10 @@ def main():
         print("[run_server] 시작 시 자동 reset (기본 동작). 메모리 유지하려면 --no-reset 사용.")
     else:
         print("[run_server] --no-reset — 기존 ChromaDB 메모리 유지 (시드 재적재 안 함)")
+
+    if args.prime > 0:
+        os.environ["NPC_PRIME_TICKS"] = str(args.prime)
+        print(f"[run_server] --prime {args.prime} — 시작 후 {args.prime} tick 자동 실행 예정")
 
     uvicorn.run(
         "src.server.app:app",

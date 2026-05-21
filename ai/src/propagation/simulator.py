@@ -34,7 +34,7 @@ class PropagationSimulator:
         transformer,  # duck-typed: transform(sender, text, source) 메서드 필요
         rng_seed: int = 42,
         importance_threshold: int = 7,
-        max_memories_per_meeting: int = 1,  # 2→1: 만남당 1개만 전파 (속도)
+        max_memories_per_meeting: int = 2,  # 1→2: 한 만남에 2개 전파 (중요 사건 누락 X)
         use_transform: bool = False,  # 페르소나 변환 LLM 호출 비활성 → 큰 속도 향상
     ):
         self.graph = graph
@@ -107,8 +107,14 @@ class PropagationSimulator:
             for mem in to_share:
                 source_kind = mem["metadata"].get("source", "observation")
                 raw = mem["text"]
+                src_meta = mem.get("metadata", {})
                 # 플레이어 발화 보존 — receiver가 "플레이어 → sender 발화"임을 명확히 인식.
-                is_player_origin = raw.startswith("플레이어가 말했다: ")
+                is_player_origin = (
+                    raw.startswith("플레이어가 말했다: ")
+                    or src_meta.get("player_origin") is True
+                    or src_meta.get("player") is True
+                )
+                src_has_personal = bool(src_meta.get("has_personal", False))
                 if self.use_transform:
                     transformed = self.transformer.transform(
                         sender, raw, source=source_kind
@@ -134,19 +140,26 @@ class PropagationSimulator:
                 # - 없으면 sender가 시작점
                 chain_origin = mem["metadata"].get("chain_origin", sender)
 
+                # 플레이어 원본 정보는 metadata에 마커 — receiver도 find_player_personal()로 회상 가능
+                new_meta = {
+                    "from": sender,
+                    "day": day,
+                    "original_id": mem["id"],
+                    "original_importance": mem["importance"],
+                    "chain_origin": chain_origin,
+                }
+                if is_player_origin:
+                    new_meta["player_origin"] = True
+                if src_has_personal:
+                    new_meta["has_personal"] = True
+
                 new_entry = MemoryEntry(
                     id=f"prop_d{day}_{uuid.uuid4().hex[:8]}",
                     text=f"{sender}한테 들었다: {transformed}",
                     importance=new_imp,
                     timestamp=datetime.now(timezone.utc),
                     source=MemorySource.PROPAGATION,
-                    metadata={
-                        "from": sender,
-                        "day": day,
-                        "original_id": mem["id"],
-                        "original_importance": mem["importance"],
-                        "chain_origin": chain_origin,
-                    },
+                    metadata=new_meta,
                 )
                 receiver_store.add(new_entry)
                 self._mark_shared(sender_store, mem["id"], receiver)

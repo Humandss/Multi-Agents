@@ -25,8 +25,8 @@ class MemoryRetriever:
         w_sim=0.70,
         w_imp=0.10,
         w_rec=0.20,
-        min_similarity: float = 0.55,
-        propagation_bonus: float = 0.05,
+        min_similarity: float = 0.45,
+        propagation_bonus: float = 0.15,  # 0.05 → 0.15: 전파 정보 적극 회상
     ):
         """가중점수: w_sim*sim + w_imp*imp + w_rec*recency + propagation_bonus(if propagation).
 
@@ -110,6 +110,9 @@ class MemoryRetriever:
             # 플레이어 직접 발화 보너스 — 플레이어 정보(이름·사건 등)는 우선 회상
             if meta.get("player") is True:
                 score += 0.15
+            # Reflection 보너스 — 추상 통찰이 단편 사실보다 우선 회상
+            if meta.get("source") == "reflection":
+                score += 0.20
             scored.append({
                 "id": id_,
                 "text": doc,
