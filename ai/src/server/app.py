@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .engine import NpcServer
+from . import pipeline_log
 
 
 class CompareRequest(BaseModel):
@@ -271,6 +272,20 @@ def create_app() -> FastAPI:
             "tick_results": results,
             "memory_counts": {display(k): v for k, v in engine.memory_counts().items()},
         })
+
+    @app.get("/pipeline/trace")
+    def pipeline_trace(n: int = 50):
+        """파이프라인 로그 최근 n개 — 발화→저장→전파→언급 흐름 조회.
+
+        발표/디버깅용. Unity '마을 일지' 패널이나 발표 자료로 활용 가능.
+        """
+        return JSONResponse({"events": pipeline_log.recent(n)})
+
+    @app.post("/pipeline/clear")
+    def pipeline_clear():
+        """파이프라인 로그 버퍼 초기화 (새 시연 시작 시)."""
+        pipeline_log.clear()
+        return JSONResponse({"cleared": True})
 
     @app.post("/reflect/{npc}")
     def reflect_npc(npc: str):

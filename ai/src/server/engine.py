@@ -587,6 +587,7 @@ from ..memory import MemoryEntry, MemoryRetriever, MemorySource, MemoryStore
 from ..memory.chat import build_user_prompt
 from ..propagation.graph import RelationGraph
 from ..propagation.simulator import PropagationSimulator
+from . import pipeline_log
 
 BASE_MODEL = "LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct"
 BASE_REVISION = "496aef060b296b34c6b0035149f5af9e2b8c168c"
@@ -1247,6 +1248,10 @@ class NpcServer:
         if npc not in self.characters:
             raise ValueError(f"알 수 없는 NPC: {npc}")
 
+        # ① 발화 — 플레이어가 NPC에게 말함
+        pipeline_log.log("utter", f'{npc} ← 플레이어: "{user_text[:60]}"',
+                         npc=npc, text=user_text[:120])
+
         t0 = time.time()
         if self.use_memory:
             # 정체성/이름 query 감지 — semantic 매칭이 약해도 personal 메모리 우선 회상.
@@ -1258,11 +1263,6 @@ class NpcServer:
                 # 플레이어 자기소개 메모리 2개 우선 추가 (최신 우선)
                 personal = self.stores[npc].find_player_personal(limit=2)
                 retrieved.extend(personal)
-                if personal:
-                    for i, p in enumerate(personal):
-                        print(f"[respond] {npc} personal#{i+1}: {p['text'][:80]}")
-                else:
-                    print(f"[respond] {npc} identity_query → personal=(없음)")
 
             # 일반 semantic retrieval (정체성 query면 보조, 아니면 메인)
             semantic = self.retrievers[npc].search(user_text, k=self.retrieval_k)
@@ -1303,6 +1303,42 @@ class NpcServer:
                             break
 
             augmented = build_user_prompt(retrieved, user_text)
+
+            # 회상 결과 로그 — 출처(누구에게 전파받았나) + 내용까지 상세 표시
+            if retrieved:
+                # source 한글 라벨
+                src_label = {
+                    "seed": "배경지식", "dialogue": "플레이어 발화",
+                    "propagation": "전파", "conversation": "NPC대화",
+                    "reflection": "통찰", "observation": "관찰",
+                }
+                recall_summary = []
+                has_from_other = False
+                for m in retrieved:
+                    meta = m.get("metadata", {})
+                    src = meta.get("source", "?")
+                    label = src_label.get(src, src)
+                    frm = meta.get("from")  # 전파/대화 출처 NPC
+                    other = meta.get("other_npc")  # NPC-NPC 대화 상대
+                    txt = m["text"][:55]
+                    if frm:  # propagation — 누구에게 들었나
+                        recall_summary.append(f"[{label}|{frm}한테] {txt}")
+                        has_from_other = True
+                    elif other:  # conversation
+                        recall_summary.append(f"[{label}|{other}와] {txt}")
+                        has_from_other = True
+                    else:
+                        recall_summary.append(f"[{label}] {txt}")
+
+                pipeline_log.log(
+                    "recall",
+                    f"{npc} 회상 {len(retrieved)}개"
+                    + ("  ← 다른 NPC에게서 전파받은 정보 활용" if has_from_other else ""),
+                    npc=npc, memories=recall_summary,
+                )
+                # 각 회상 메모리를 별도 줄로 상세 표시 (출처 + 내용)
+                for s in recall_summary:
+                    pipeline_log.log("recall", f"   └ {s}", npc=npc, detail=True)
         else:
             retrieved = []
             augmented = user_text
@@ -1345,6 +1381,10 @@ class NpcServer:
         # 플레이어 이름 변형 자동 복원 (예: "반욱헌" → "반욱현")
         text = self._restore_player_name(text)
         latency_ms = int((time.time() - t0) * 1000)
+
+        # ④ 언급 — NPC 최종 응답
+        pipeline_log.log("recall", f'{npc} → 플레이어: "{text[:60]}" ({latency_ms}ms)',
+                         npc=npc, response=text[:120], latency_ms=latency_ms)
 
         # ─────────────────────────────────────────────────────────
         # LLM 자동 Quest 생성 — 일단 보류 (2026-05-13).
@@ -1781,6 +1821,9 @@ class NpcServer:
     ) -> dict | None:
         """NPC 응답 + 회상 메모리에서 quest 객체 추출.
 
+        ⚠️ 현재 비활성 (2026-05-13 보류). respond()의 호출부가 주석 처리됨.
+           Quest는 NPC_QUEST_POOL 기반 제안으로 대체됨. 향후 hybrid 방식 도입 시 복원.
+
         LLM 별도 호출 (deterministic) → JSON 파싱 → quest dict 반환.
         실패하거나 has_quest=false면 None.
         """
@@ -1836,9 +1879,11 @@ class NpcServer:
             return  # 너무 짧은 감탄사만 제외
 
         # 질문문 vs 평서문 분기
-        is_question = "?" in text or any(
-            text.endswith(suf) for suf in ["어요", "지요", "나요", "까", "야"]
-        )
+        # 핵심: "잡았어요"(평서) vs "잡았어요?"(질문) 구분.
+        # "?" 가 있거나, 명백한 의문 어미로 끝날 때만 질문.
+        # "어요/지요"는 평서문에도 흔해서 제외 (잡았어요·봤어요는 사실 보고).
+        q_endings = ["나요", "까요", "까", "가요", "는가요", "니", "냐", "을까", "ㄹ까", "신지", "는지"]
+        is_question = "?" in text or any(text.rstrip().endswith(suf) for suf in q_endings)
         # 사실 보고 키워드 (강한 fact 신호) — 다양한 활용형 포함
         fact_kw = ["나타났", "사라졌", "잡았", "봤", "들었", "있었", "갔다", "왔다", "했다",
                    "됐다", "당했", "보았", "만났", "들었어", "가봤", "도와", "받았",
@@ -1889,6 +1934,20 @@ class NpcServer:
             },
         )
         self.stores[npc].add(entry)
+
+        # ② 저장 — ChromaDB에 적재 (전파 후보면 강조)
+        tags = []
+        if has_personal: tags.append("자기소개")
+        if has_fact: tags.append("사실보고")
+        if is_question: tags.append("질문")
+        tag_str = "/".join(tags) if tags else "일반"
+        spread_note = " → 전파 후보" if importance >= 7 else " (전파 X)"
+        pipeline_log.log(
+            "store",
+            f"{npc}.db ← imp:{importance} [{tag_str}]{spread_note}",
+            npc=npc, importance=importance, source="dialogue",
+            has_personal=has_personal, has_fact=has_fact, is_question=is_question,
+        )
 
         # 플레이어 이름 자동 추출 → 응답 시 LLM에게 정확히 전달 + 후처리 자동 복원
         if has_personal and not is_question:
@@ -2032,6 +2091,26 @@ class NpcServer:
             use_transform=not fast,  # fast 모드면 transform 생략
         )
         events = sim.tick(day)
+
+        # ③ 전파 로그 — 누가 누구에게 전달했는지 (player_origin 우선 강조)
+        if events:
+            player_events = [e for e in events if e.get("player_origin")]
+            other_events = [e for e in events if not e.get("player_origin")]
+            # 플레이어 발화 전파를 우선 표시 (시연 핵심)
+            for e in player_events[:5]:
+                pipeline_log.log(
+                    "spread",
+                    f"Day{day}: {e['from']} → {e['to']}  [플레이어 정보 전파] "
+                    f"\"{e['transformed'][:45]}\"",
+                    day=day, frm=e["from"], to=e["to"], player_origin=True,
+                )
+            # 그 외 전파는 요약만
+            if other_events:
+                pipeline_log.log(
+                    "spread",
+                    f"Day{day}: 그 외 마을 소식 {len(other_events)}건 전파",
+                    day=day, count=len(other_events), player_origin=False,
+                )
 
         # 2단계: NPC-NPC 자율 대화 1쌍 (옵션)
         conversation_result = None

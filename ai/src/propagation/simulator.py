@@ -3,7 +3,6 @@
 import random
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from ..memory import MemoryEntry, MemorySource, MemoryStore
 from .graph import RelationGraph
