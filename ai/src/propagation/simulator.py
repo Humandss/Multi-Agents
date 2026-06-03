@@ -172,6 +172,8 @@ class PropagationSimulator:
                     "transformed": transformed,
                     "importance_before": mem["importance"],
                     "importance_after": new_imp,
+                    "player_origin": is_player_origin,
+                    "chain_origin": chain_origin,
                 })
         return events
 

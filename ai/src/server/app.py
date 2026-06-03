@@ -398,6 +398,8 @@ def create_app() -> FastAPI:
                     "transformed": ev["transformed"][:120],
                     "importance_before": ev["importance_before"],
                     "importance_after": ev["importance_after"],
+                    "player_origin": ev.get("player_origin", False),
+                    "chain_origin": display(ev["chain_origin"]) if ev.get("chain_origin") else "",
                 }
                 for ev in result.get("events", [])
             ]
@@ -490,6 +492,8 @@ def create_app() -> FastAPI:
                             "transformed": ev["transformed"][:120],
                             "importance_before": ev["importance_before"],
                             "importance_after": ev["importance_after"],
+                            "player_origin": ev.get("player_origin", False),
+                            "chain_origin": display(ev["chain_origin"]) if ev.get("chain_origin") else "",
                         })
                     # NPC-NPC 대화 결과 (있을 시)
                     conv = result.get("conversation")
