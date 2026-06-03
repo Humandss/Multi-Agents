@@ -97,8 +97,6 @@ namespace NpcChat
         public string transformed;
         public int importance_before;
         public int importance_after;
-        public bool player_origin;   // 플레이어 발화에서 비롯된 정보인가
-        public string chain_origin;  // 최초 출처 NPC
     }
 
     [Serializable]
