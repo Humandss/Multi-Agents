@@ -1415,7 +1415,21 @@ class NpcServer:
             self._save_player_turn(npc, user_text)
 
         # 신뢰도 업데이트 (응답 후, 다음 대화부터 영향)
+        trust_before = self.trust.get(npc)
+        label_before = self.trust.label(npc)
         trust_delta = self.trust.on_player_turn(npc, user_text)
+        trust_after = self.trust.get(npc)
+        label_after = self.trust.label(npc)
+        # ♥ 친밀도 로그 (변화 있을 때만)
+        if trust_delta != 0:
+            sign = f"+{trust_delta}" if trust_delta > 0 else f"{trust_delta}"
+            promote = "  ⭐ 등급 변화!" if label_before != label_after else ""
+            pipeline_log.log(
+                "trust",
+                f"{npc} {trust_before} → {trust_after} ({sign}) [{label_after}]{promote}",
+                npc=npc, before=trust_before, after=trust_after, delta=trust_delta,
+                label=label_after,
+            )
 
         return {
             "npc": npc,
@@ -1439,9 +1453,18 @@ class NpcServer:
         """Quest 완수 시 호출 — 신뢰도 +10. quest_id 명시되면 상태 'completed'."""
         if npc not in self.characters:
             raise ValueError(f"알 수 없는 NPC: {npc}")
+        label_before = self.trust.label(npc)
+        before = self.trust.get(npc)
         delta = self.trust.on_quest_complete(npc)
         if quest_id:
             self.quests.mark_completed(quest_id)
+        # ♥ 친밀도 로그 — quest 완료 보상
+        promote = "  ⭐ 등급 변화!" if label_before != self.trust.label(npc) else ""
+        pipeline_log.log(
+            "trust",
+            f"{npc} {before} → {self.trust.get(npc)} (+{delta}) quest 완료!{promote}",
+            npc=npc, delta=delta, reason="quest",
+        )
         return {
             "npc": npc,
             "quest_id": quest_id,
@@ -1592,9 +1615,11 @@ class NpcServer:
             if len(reflections) >= 3:
                 break
 
-        # 메모리로 저장
+        # 메모리로 저장 + 통찰 로그
+        cleaned_insights = []
         for i, insight in enumerate(reflections):
             insight_clean = _clean_response(insight, npc=npc)
+            cleaned_insights.append(insight_clean)
             entry = MemoryEntry(
                 id=f"refl_d{self.day}_{uuid.uuid4().hex[:8]}",
                 text=insight_clean,
@@ -1604,6 +1629,16 @@ class NpcServer:
                 metadata={"day": self.day, "source_count": len(recent)},
             )
             self.stores[npc].add(entry)
+
+        # ✦ 통찰 로그 — 최근 메모리에서 추출한 추상 통찰
+        if cleaned_insights:
+            pipeline_log.log(
+                "reflect",
+                f"{npc} — 최근 {len(recent)}개 메모리(imp합 {imp_sum}) → 통찰 {len(cleaned_insights)}개",
+                npc=npc, imp_sum=imp_sum, insights=cleaned_insights,
+            )
+            for ins in cleaned_insights:
+                pipeline_log.log("reflect", f"   └ {ins}", npc=npc, detail=True)
 
         return {
             "npc": npc,
@@ -1782,6 +1817,17 @@ class NpcServer:
             },
         )
         self.stores[npc_b].add(entry_b)
+
+        # ○ 자율대화 로그 — 두 NPC가 나눈 대화 + 양쪽 메모리 저장
+        pipeline_log.log(
+            "chat",
+            f"Day{self.day}: {npc_a} ↔ {npc_b}  (주제: {topic[:40]})",
+            npc_a=npc_a, npc_b=npc_b, day=self.day,
+        )
+        for t in turns:
+            ko = t.get("speaker_ko", t["speaker"])
+            pipeline_log.log("chat", f"   └ {ko}: {t['text'][:55]}", detail=True)
+        pipeline_log.log("chat", f"   → {npc_a}, {npc_b} 양쪽 메모리에 저장", detail=True)
 
         return {
             "npc_a": npc_a,

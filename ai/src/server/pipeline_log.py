@@ -18,15 +18,21 @@ _C = {
     "store": "\033[93m",    # yellow
     "spread": "\033[95m",   # magenta
     "recall": "\033[92m",   # green
+    "trust": "\033[91m",    # red
+    "reflect": "\033[94m",  # blue
+    "chat": "\033[35m",     # 진한 magenta
     "reset": "\033[0m",
     "dim": "\033[90m",
 }
 
 _STAGE_LABEL = {
-    "utter": "① 발화",
-    "store": "② 저장",
-    "spread": "③ 전파",
-    "recall": "④ 언급",
+    "utter": "1.발화",
+    "store": "2.저장",
+    "spread": "3.전파",
+    "recall": "4.언급",
+    "trust": "+ 친밀도",
+    "reflect": "* 통찰",
+    "chat": "o 자율대화",
 }
 
 # on/off 토글 — 발표/디버깅 시 True, 운영 시 False 가능
@@ -54,8 +60,13 @@ def log(stage: str, message: str, **fields):
         return
     label = _STAGE_LABEL.get(stage, stage)
     color = _C.get(stage, "")
-    # 콘솔 출력 (색상)
-    print(f"{color}[PIPELINE {label}]{_C['reset']} {message}")
+    # 콘솔 출력 (색상). cp949 콘솔에서 특수문자 인코딩 에러 방지.
+    line = f"{color}[PIPELINE {label}]{_C['reset']} {message}"
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        # 인코딩 불가 문자 제거 후 출력
+        print(line.encode("utf-8", "replace").decode("utf-8", "replace"))
     # 버퍼 저장
     _BUFFER.append({
         "seq": _next_seq(),
