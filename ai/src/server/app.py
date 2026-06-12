@@ -201,10 +201,13 @@ def create_app() -> FastAPI:
             except Exception as e:
                 return JSONResponse({"error": f"{npc} reset 실패: {e}"}, status_code=500)
 
-        # 2) Trust / Quest 상태도 초기화
+        # 2) Trust / Quest / 플레이어 식별 상태도 초기화
         engine.trust = type(engine.trust)()
         engine.quests = type(engine.quests)()
         engine.day = 0
+        engine.player_name = None          # 메모리 지웠는데 이름만 남으면 모순
+        engine._name_known_cache = set()   # 이름 인지 캐시도 함께
+        engine._name_regex_cache = None
 
         # 3) 시드 메모리 재적재
         reseeded = 0
@@ -334,6 +337,41 @@ def create_app() -> FastAPI:
         return JSONResponse({
             "npc": display(npc_id),
             "player_memories": engine.stores[npc_id].find_player_all(limit=50),
+        })
+
+    @app.post("/debug/complete_all")
+    def debug_complete_all():
+        """디버그/시연용 — 진행 중(accepted)인 모든 퀘스트를 완료 처리 (Unity H키).
+
+        각 퀘스트마다 정식 complete_quest 흐름 (trust +10 + 경험담 기억 + NPC 반응).
+        """
+        from .engine import NPC_QUEST_POOL
+        results = []
+        for npc_id, pool in NPC_QUEST_POOL.items():
+            for q in pool:
+                if engine.quests.status(q["id"]) == "accepted":
+                    try:
+                        r = engine.complete_quest(npc_id, quest_id=q["id"])
+                        results.append(add_display_npc(r))
+                    except Exception as e:
+                        results.append({"quest_id": q["id"], "error": str(e)})
+        return JSONResponse({"completed": len(results), "results": results})
+
+    @app.get("/quests/{npc}")
+    def quests_for_npc(npc: str):
+        """특정 NPC의 퀘스트 리스트 (Unity 퀘스트 패널용).
+
+        각 항목: id/title/description/reward/trust_required/state/eligible.
+        state: available(시작 가능) | accepted(진행 중) | completed(완료)
+        """
+        npc_id = normalize(npc)
+        if npc_id not in engine.characters:
+            return JSONResponse({"error": "unknown npc"}, status_code=404)
+        cur = engine.trust.get(npc_id)
+        return JSONResponse({
+            "npc": display(npc_id),
+            "trust": cur,
+            "quests": engine.quests.list_for_npc(npc_id, cur),
         })
 
     @app.get("/quests")
@@ -473,6 +511,8 @@ def create_app() -> FastAPI:
             })
 
         history: list[dict] = []
+        # 퀘스트 제안 후 응답 대기 상태 (세션 로컬 — 연결 끊기면 자동 소멸 = 미수락)
+        pending_quest: str | None = None
 
         try:
             while True:
@@ -529,6 +569,31 @@ def create_app() -> FastAPI:
                         payload["memory_saved"] = bool(conv.get("memory_saved", False))
                     await ws.send_json(payload)
                     continue
+                if msg_type == "quest_propose":
+                    # 플레이어가 퀘스트 리스트에서 시작 → NPC 퀘스트 대사 (template, 즉답)
+                    quest_id = (msg.get("quest_id") or "").strip()
+                    result = engine.propose_quest(npc_name, quest_id)
+                    if "error" in result:
+                        await ws.send_json({"type": "error", "message": result["error"]})
+                        continue
+                    pending_quest = quest_id
+                    quest = dict(result["quest"])
+                    quest["giver"] = display(quest.get("giver", npc_name))
+                    # history에도 반영 (이후 LLM 대화 맥락 유지)
+                    history.append({"role": "assistant", "content": result["text"]})
+                    await ws.send_json({
+                        "type": "response",
+                        "npc": display(npc_name),
+                        "text": result["text"],
+                        "latency_ms": 0,
+                        "memories_used": [],
+                        "quest": quest,
+                        "quest_stage": "proposed",
+                        "trust": engine.trust.get(npc_name),
+                        "trust_label": engine.trust.label(npc_name),
+                        "trust_delta": 0,
+                    })
+                    continue
                 if msg_type != "chat":
                     await ws.send_json({"type": "error", "message": "unsupported type"})
                     continue
@@ -536,6 +601,33 @@ def create_app() -> FastAPI:
                 user_text = msg.get("text", "").strip()
                 if not user_text:
                     await ws.send_json({"type": "error", "message": "empty text"})
+                    continue
+
+                # 퀘스트 제안 응답 대기 중 → 분류해서 template 즉답 (LLM 생략)
+                if pending_quest is not None:
+                    qid = pending_quest
+                    pending_quest = None
+                    reply = engine.handle_quest_reply(npc_name, qid, user_text)
+                    # 친밀도는 평소처럼 흐름 (+1 등)
+                    trust_delta = engine.trust.on_player_turn(npc_name, user_text)
+                    # history 유지 (이후 LLM 대화가 맥락을 앎)
+                    history.append({"role": "user", "content": user_text})
+                    history.append({"role": "assistant", "content": reply["text"]})
+                    if len(history) > HISTORY_TURNS * 2:
+                        history = history[-HISTORY_TURNS * 2:]
+                    await ws.send_json({
+                        "type": "response",
+                        "npc": display(npc_name),
+                        "text": reply["text"],
+                        "latency_ms": 0,
+                        "memories_used": [],
+                        "quest": None,
+                        "quest_stage": reply["stage"],   # accepted | declined | unclear
+                        "quest_id": qid,
+                        "trust": engine.trust.get(npc_name),
+                        "trust_label": engine.trust.label(npc_name),
+                        "trust_delta": trust_delta,
+                    })
                     continue
 
                 try:

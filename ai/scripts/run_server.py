@@ -37,13 +37,17 @@ def main():
         os.environ["NPC_PRIME_TICKS"] = str(args.prime)
         print(f"[run_server] --prime {args.prime} — 시작 후 {args.prime} tick 자동 실행 예정")
 
+    # 시연 콘솔 정리: uvicorn 요청/접속 로그 끄고 파이프라인 로그만 표시
+    print(f"[run_server] 서버 시작 — ws://{args.host}:{args.port}/ws "
+          f"(요청 로그 끔, 아래는 파이프라인 로그만)")
     uvicorn.run(
         "src.server.app:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
         app_dir=str(ROOT),
-        log_level="info",
+        log_level="warning",
+        access_log=False,
     )
 
 

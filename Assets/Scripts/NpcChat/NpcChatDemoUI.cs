@@ -280,8 +280,33 @@ namespace NpcChat
             }
         }
 
-        private void OnEnable() { TrySubscribeDialogueManager(); }
-        private void OnDisable() { UnsubscribeDialogueManager(); }
+        private void OnEnable()
+        {
+            TrySubscribeDialogueManager();
+            if (QuestManager.Instance != null)
+                QuestManager.Instance.OnQuestCompleted += HandleQuestCompleted;
+        }
+
+        private void OnDisable()
+        {
+            UnsubscribeDialogueManager();
+            if (QuestManager.Instance != null)
+                QuestManager.Instance.OnQuestCompleted -= HandleQuestCompleted;
+        }
+
+        /// <summary>퀘스트 완료 → 대화창에 구분선 + NPC 반응 + 친밀도 표시.</summary>
+        private void HandleQuestCompleted(QuestEntry e, string reaction)
+        {
+            AppendHistory($"<color=#7fff7f>--------- 퀘스트 완료: {e.title} ---------</color>");
+            if (!string.IsNullOrEmpty(reaction))
+            {
+                string giverDisplay = DisplayName(e.giver);
+                Color color = GetNpcColor(giverDisplay);
+                AppendHistory($"<color=#{ColorToHex(color)}><b>[{giverDisplay}]</b></color> {reaction}");
+                SetCurrentResponse(giverDisplay, reaction, color);
+            }
+            AppendHistory("<size=80%><color=#888>  ↳ 친밀도 +10</color></size>");
+        }
 
         private void Update()
         {
@@ -335,11 +360,14 @@ namespace NpcChat
             _subscribed = false;
         }
 
+        private string _currentNpcRaw = "";   // 퀘스트 리스트 동기화용
+
         private async void HandleDialogueStarted(NpcInteractor npc)
         {
             ClearHistoryLog();
             // npcName이 비어있으면 GameObject 이름 사용 (안전망)
             string rawName = string.IsNullOrEmpty(npc.npcName) ? npc.gameObject.name : npc.npcName;
+            _currentNpcRaw = rawName;
             string displayName = DisplayName(rawName);
             ResetCurrentDisplay(displayName);
             HideQuestCard();
@@ -437,6 +465,20 @@ namespace NpcChat
             _ = _client.SendTimeAdvanceAsync();
         }
 
+        /// <summary>
+        /// 퀘스트 리스트에서 '예' 선택 → 대화창에 구분선 + 서버에 퀘스트 제안 요청.
+        /// NPC가 퀘스트 대사("...해주겠나?")로 응답하고, 플레이어의 다음 채팅이
+        /// 수락/거절로 분류됨 (서버 quest_stage).
+        /// </summary>
+        public void ProposeQuest(QuestEntry e)
+        {
+            if (e == null) return;
+            if (_client == null || !_client.IsOpen) { SetStatus("연결되지 않음"); return; }
+            AppendHistory($"<color=#ffd54f>--------- 퀘스트: {e.title} ---------</color>");
+            SetStatus("퀘스트 제안 중...");
+            _ = _client.SendQuestProposeAsync(e.id);
+        }
+
         // ========== ChatClient 이벤트 ==========
         private void HandleReady()
         {
@@ -471,6 +513,17 @@ namespace NpcChat
 
             // Quest
             ShowQuest(resp.quest);
+
+            // 퀘스트 흐름 마커 — 수락/거절 구분선 + 리스트 동기화
+            if (!string.IsNullOrEmpty(resp.quest_stage))
+            {
+                if (resp.quest_stage == "accepted")
+                    AppendHistory("<color=#7fff7f>--------- 퀘스트 수락 ---------</color>");
+                else if (resp.quest_stage == "declined" || resp.quest_stage == "unclear")
+                    AppendHistory("<color=#888888>--------- 퀘스트 보류 ---------</color>");
+                if (QuestManager.Instance != null && !string.IsNullOrEmpty(_currentNpcRaw))
+                    QuestManager.Instance.FetchQuestsFor(_currentNpcRaw);
+            }
 
             // Trust (친밀도)
             if (resp.trust > 0 || !string.IsNullOrEmpty(resp.trust_label))
@@ -634,8 +687,22 @@ namespace NpcChat
 
         private void ShowQuest(Quest q)
         {
+            if (q == null || !q.IsValid)
+            {
+                if (questCard != null) questCard.SetActive(false);
+                return;
+            }
+
+            // QuestManager(퀘스트 리스트 UI) 있으면 리스트가 관리 — 구 카드 숨김
+            // (리스트 내용은 서버 fetch가 source of truth)
+            if (QuestManager.Instance != null)
+            {
+                if (questCard != null) questCard.SetActive(false);
+                return;
+            }
+
+            // ── 이하 fallback: QuestManager 없을 때 기존 단일 카드 ──
             if (questCard == null) return;
-            if (q == null || !q.IsValid) { questCard.SetActive(false); return; }
 
             // 최초 표시 시 채팅 패널 밖으로 reparent — Canvas 자식 좌측 상단으로 배치
             if (!_questCardRelocated)

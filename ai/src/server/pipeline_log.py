@@ -21,6 +21,7 @@ _C = {
     "trust": "\033[91m",    # red
     "reflect": "\033[94m",  # blue
     "chat": "\033[35m",     # 진한 magenta
+    "quest": "\033[33m",    # 진한 yellow
     "reset": "\033[0m",
     "dim": "\033[90m",
 }
@@ -33,6 +34,7 @@ _STAGE_LABEL = {
     "trust": "+ 친밀도",
     "reflect": "* 통찰",
     "chat": "o 자율대화",
+    "quest": "! 퀘스트",
 }
 
 # on/off 토글 — 발표/디버깅 시 True, 운영 시 False 가능

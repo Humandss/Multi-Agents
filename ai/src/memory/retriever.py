@@ -1,11 +1,28 @@
 """의미 유사도 + 중요도 + 최신성 가중 검색.
 
 Generative Agents (Park et al., 2023) 메모리 스트림 방식 단순화.
++ Ebbinghaus 망각곡선 (SAGE 계열): game_day 전달 시 일화 기억은
+  지수 감쇠 retention으로 최신성 계산. 회상될수록 강화(recall_count).
 """
 
+import math
 from datetime import datetime, timezone
 
 from .store import MemoryStore
+
+# 망각곡선 대상 — 일화 기억(episodic)만 감쇠.
+# seed(의미 기억)·reflection(공고화된 통찰)은 감쇠 면제 (Ebbinghaus는 일화 기억 이론).
+EPISODIC_SOURCES = {"dialogue", "propagation", "conversation", "observation"}
+
+# 기본 반감 스케일 (game day 단위). 회상 1회마다 (1 + recall_count)배로 늘어남
+# → "자주 회상되는 기억은 오래 남는다" (spaced repetition 효과).
+BASE_STRENGTH_DAYS = 3.0
+
+
+def retention(delta_days: float, recall_count: int = 0) -> float:
+    """Ebbinghaus 잔존율 R = exp(-Δt / S). S는 회상 횟수에 비례해 성장."""
+    strength = BASE_STRENGTH_DAYS * (1.0 + max(0, recall_count))
+    return math.exp(-max(0.0, delta_days) / strength)
 
 
 def _parse_ts(s):
@@ -52,6 +69,7 @@ class MemoryRetriever:
         pool: int = 20,
         exclude_sources: set[str] | None = None,
         min_importance: int = 5,
+        game_day: int | None = None,
     ):
         """pool개 후보 중 의미 유사도 임계값 이상 + 가중 점수 상위 k개 반환.
 
@@ -90,18 +108,34 @@ class MemoryRetriever:
                 continue
             imp = float(mem_imp) / 10.0
 
-            ts = _parse_ts(meta.get("timestamp", ""))
-            if ts is None:
-                rec = 0.5
-            else:
-                # 7일 이내 메모리에 강한 가중 (게임 내 시뮬 시간 기준)
-                days = (now - ts).days
-                if days <= 1:
-                    rec = 1.0
-                elif days <= 7:
-                    rec = 0.85
+            src = meta.get("source", "observation")
+            # 최신성: game_day가 주어지고 일화 기억이면 Ebbinghaus 망각곡선 (SAGE 계열)
+            if game_day is not None and src in EPISODIC_SOURCES:
+                last = meta.get("last_access_day", meta.get("day"))
+                try:
+                    last = int(last)
+                except (TypeError, ValueError):
+                    last = None
+                if last is None:
+                    rec = 0.5  # game day 정보 없는 옛 메모리
                 else:
-                    rec = max(0.0, 1.0 - days / 30.0)
+                    rec = retention(
+                        game_day - last,
+                        int(meta.get("recall_count", 0) or 0),
+                    )
+            else:
+                # 비일화 기억(seed/reflection) 또는 game_day 미지정: 실시간 기반 (기존)
+                ts = _parse_ts(meta.get("timestamp", ""))
+                if ts is None:
+                    rec = 0.5
+                else:
+                    days = (now - ts).days
+                    if days <= 1:
+                        rec = 1.0
+                    elif days <= 7:
+                        rec = 0.85
+                    else:
+                        rec = max(0.0, 1.0 - days / 30.0)
 
             score = self.w_sim * sim + self.w_imp * imp + self.w_rec * rec
             # propagation 소스 보너스 — 다른 NPC한테 들은 정보가 더 잘 떠오름

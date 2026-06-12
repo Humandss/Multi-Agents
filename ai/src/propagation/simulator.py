@@ -44,14 +44,16 @@ class PropagationSimulator:
         self.max_per_meeting = max_memories_per_meeting
         self.use_transform = use_transform
 
-    def _select_to_share(self, sender_store: MemoryStore, receiver_npc: str, sender_npc: str):
+    def _select_to_share(self, all_data: dict, receiver_npc: str, sender_npc: str):
         """sender가 receiver에게 전달할 메모리 후보 선택.
         - importance >= threshold
         - 이미 receiver에게 전파한 적 없음 (metadata로 추적)
         - 자가-에코 차단: 이 메모리의 chain_origin이 receiver면 skip
         - 보조: 텍스트에 receiver 이름 명시되면 skip
+
+        all_data: sender_store.all() 결과 — tick()이 sender별로 1회만 조회해 전달
+        (엣지마다 full-scan 반복 방지. shared_with 마커는 receiver별이라 캐시 안전).
         """
-        all_data = sender_store.all()
         candidates = []
         for i, meta in enumerate(all_data["metadatas"]):
             imp = int(meta.get("importance", 5))
@@ -93,15 +95,25 @@ class PropagationSimulator:
         )
 
     def tick(self, day: int):
-        """하루치 시뮬레이션 — 각 엣지에 대해 만남 확률 검사."""
+        """하루치 시뮬레이션 — 각 엣지에 대해 만남 확률 검사.
+
+        최적화: sender별 store.all()을 tick당 1회만 조회 (read_cache).
+        같은 tick에 새 메모리를 받은 NPC는 캐시 무효화 → 기존 동작(같은 tick
+        relay 가능)을 그대로 보존하면서 스캔 횟수만 20회 → ~5회로 감소.
+        """
         events = []
+        read_cache: dict[str, dict] = {}
         for sender, receiver, freq in self.graph.directed_edges():
             if self.rng.random() >= freq:
                 continue
 
             sender_store = self.stores[sender]
             receiver_store = self.stores[receiver]
-            to_share = self._select_to_share(sender_store, receiver, sender)
+            all_data = read_cache.get(sender)
+            if all_data is None:
+                all_data = sender_store.all()
+                read_cache[sender] = all_data
+            to_share = self._select_to_share(all_data, receiver, sender)
 
             for mem in to_share:
                 source_kind = mem["metadata"].get("source", "observation")
@@ -161,6 +173,9 @@ class PropagationSimulator:
                     metadata=new_meta,
                 )
                 receiver_store.add(new_entry)
+                # receiver가 새 메모리를 받음 → 이후 receiver가 sender 역할일 때
+                # 최신 상태를 보도록 캐시 무효화 (같은 tick relay 동작 보존)
+                read_cache.pop(receiver, None)
                 self._mark_shared(sender_store, mem["id"], receiver)
 
                 events.append({

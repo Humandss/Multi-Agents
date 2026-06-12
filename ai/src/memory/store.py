@@ -139,12 +139,15 @@ class MemoryStore:
             metadata={"hnsw:space": "cosine"},
         )
 
-    def prune(self, max_keep: int = 80, preserve_sources: tuple = ("seed",)) -> int:
-        """메모리 수가 max_keep 초과 시 importance 낮고 오래된 것부터 삭제.
+    def prune(self, max_keep: int = 80, preserve_sources: tuple = ("seed",),
+              current_day: int | None = None) -> int:
+        """메모리 수가 max_keep 초과 시 정리.
 
         - preserve_sources: 항상 보존할 source (기본 'seed')
         - 플레이어 발화 (player=True) 항상 보존 — 프로젝트 핵심 가치.
-        - 플레이어 정보 propagation (text에 "플레이어가" 포함) 보존 — 다른 NPC가 plyaer 알도록.
+        - 플레이어 정보 propagation (text에 "플레이어가" 포함) 보존.
+        - current_day 주어지면 **retention(망각곡선) 낮은 것부터** 삭제 (SAGE 계열):
+          오래 회상 안 된 일화 기억이 먼저 잊혀짐. 없으면 기존 (importance, 시간) 순.
         - 반환: 삭제된 메모리 수
         """
         if self.collection.count() <= max_keep:
@@ -155,7 +158,7 @@ class MemoryStore:
         docs = all_data["documents"]
         metas = all_data["metadatas"]
 
-        # (id, importance, timestamp, source, is_player) 튜플로 정렬용 데이터
+        # (id, importance, timestamp, source, is_player, 망각 관련) 정렬용 데이터
         entries = []
         for i, mid in enumerate(ids):
             meta = metas[i] if i < len(metas) else {}
@@ -169,6 +172,8 @@ class MemoryStore:
                 "timestamp": ts,
                 "source": src,
                 "is_player": is_player,
+                "last_access": meta.get("last_access_day", meta.get("day")),
+                "recall_count": int(meta.get("recall_count", 0) or 0),
             })
 
         # 보존:
@@ -195,8 +200,23 @@ class MemoryStore:
                     and not e["is_player"]
                     and not _is_player_propagation(e)]
 
-        # prunable 정렬: importance 낮고 오래된 것 우선 삭제
-        prunable.sort(key=lambda x: (x["importance"], x["timestamp"]))
+        # prunable 정렬
+        if current_day is not None:
+            # 망각곡선 기반: retention 낮은 것(오래 회상 안 됨) 먼저, 동률이면 importance 낮은 것
+            from .retriever import retention  # 함수 레벨 import (순환 회피)
+
+            def _ret(e):
+                last = e["last_access"]
+                try:
+                    last = int(last)
+                except (TypeError, ValueError):
+                    return 0.0  # day 정보 없는 옛 메모리 = 가장 먼저 잊혀짐
+                return retention(current_day - last, e["recall_count"])
+
+            prunable.sort(key=lambda x: (_ret(x), x["importance"]))
+        else:
+            # 기존 방식: importance 낮고 오래된 것 우선
+            prunable.sort(key=lambda x: (x["importance"], x["timestamp"]))
 
         budget = max(0, max_keep - len(preserved))
         if len(prunable) > budget:

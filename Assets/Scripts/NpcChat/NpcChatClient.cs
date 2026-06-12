@@ -108,6 +108,17 @@ namespace NpcChat
             await _ws.SendText(json);
         }
 
+        public async Task SendQuestProposeAsync(string questId)
+        {
+            if (!IsOpen)
+            {
+                OnError?.Invoke("연결이 열려있지 않습니다");
+                return;
+            }
+            string json = JsonUtility.ToJson(new QuestProposeRequest(questId));
+            await _ws.SendText(json);
+        }
+
         public async Task SendTimeAdvanceAsync()
         {
             if (!IsOpen)

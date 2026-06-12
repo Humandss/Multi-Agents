@@ -19,6 +19,8 @@ Park et al. *Generative Agents* (2023) framework를 Unity 게임 NPC에 적용.
 | **친밀도(Trust)** | 0-100, 4등급. 대화/quest로 변동. 등급별 greeting. |
 | **Quest** | NPC별 quest pool. trust 조건 충족 시 자동 제안. |
 | **파이프라인 로그** | 발화→저장→전파→언급 + 친밀도/통찰/자율대화 색상 로그. |
+| **망각곡선 + 회상 강화** | Ebbinghaus 지수 감쇠(SAGE 계열): 일화 기억만 감쇠, 회상될수록 반감기 성장(`recall_count`). seed·reflection은 면제. prune도 retention 낮은 것부터. |
+| **인식론적 기억 타입** | Hindsight 계열: 회상 프롬프트에 (직접 들음/전해 들은 소문/나의 생각/아는 사실) 라벨 → NPC가 확신도를 다르게 표현 ("~라더라" vs 확신). |
 
 ---
 
