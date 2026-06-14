@@ -284,14 +284,29 @@ namespace NpcChat
         {
             TrySubscribeDialogueManager();
             if (QuestManager.Instance != null)
+            {
                 QuestManager.Instance.OnQuestCompleted += HandleQuestCompleted;
+                QuestManager.Instance.OnDistortionToggled += HandleDistortionToggled;
+            }
         }
 
         private void OnDisable()
         {
             UnsubscribeDialogueManager();
             if (QuestManager.Instance != null)
+            {
                 QuestManager.Instance.OnQuestCompleted -= HandleQuestCompleted;
+                QuestManager.Instance.OnDistortionToggled -= HandleDistortionToggled;
+            }
+        }
+
+        /// <summary>내용 왜곡 T키 토글 → 대화창에 상태 표시 (녹화/시연에 보이게).</summary>
+        private void HandleDistortionToggled(bool on)
+        {
+            if (on)
+                AppendHistory("<color=#ff9f43>--------- 내용 왜곡 ON · 전파될 때 소문이 변형됩니다 (느려짐) ---------</color>");
+            else
+                AppendHistory("<color=#888888>--------- 내용 왜곡 OFF · 전파 시 내용 보존 (빠른 모드) ---------</color>");
         }
 
         /// <summary>퀘스트 완료 → 대화창에 구분선 + NPC 반응 + 친밀도 표시.</summary>
@@ -561,18 +576,29 @@ namespace NpcChat
 
             if (showTickEvents && tick.events != null)
             {
+                // 내용 왜곡 ON이면 원문→변형 둘 다 표시 (왜곡이 눈에 보이게).
+                bool showOrigin = QuestManager.Instance != null
+                                  && QuestManager.Instance.contentDistortion;
                 int max = Mathf.Min(tick.events.Length, 8);
                 for (int i = 0; i < max; i++)
                 {
                     var ev = tick.events[i];
                     Color cf = GetNpcColor(ev.from);
                     Color ct = GetNpcColor(ev.to);
-                    AppendHistory(
-                        $"<size=80%><color=#{ColorToHex(cf)}>{ev.from}</color>" +
+                    string head =
+                        $"<color=#{ColorToHex(cf)}>{ev.from}</color>" +
                         $" <color=#888>→</color> " +
-                        $"<color=#{ColorToHex(ct)}>{ev.to}</color>" +
-                        $": <color=#aaa>\"{Truncate(ev.transformed, 50)}\"</color></size>"
-                    );
+                        $"<color=#{ColorToHex(ct)}>{ev.to}</color>";
+                    if (showOrigin && !string.IsNullOrEmpty(ev.original))
+                        AppendHistory(
+                            $"<size=80%>{head}: " +
+                            $"<color=#888>\"{Truncate(ev.original, 36)}\"</color>" +
+                            $" <color=#ff9f43>→ \"{Truncate(ev.transformed, 36)}\"</color></size>"
+                        );
+                    else
+                        AppendHistory(
+                            $"<size=80%>{head}: <color=#aaa>\"{Truncate(ev.transformed, 50)}\"</color></size>"
+                        );
                 }
                 if (tick.events.Length > max)
                     AppendHistory($"<size=80%><color=#888>  (외 {tick.events.Length - max}건)</color></size>");

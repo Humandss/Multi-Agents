@@ -1405,6 +1405,8 @@ class NpcServer:
             print("[engine] 관계 그래프 없음, propagation 비활성")
 
         self.day = 0
+        # 내용 왜곡 — 전파 시 LLM이 NPC 말투로 재서술. 기본 OFF(빠름). Unity T키로 토글.
+        self.content_distortion = False
         self._transform_cache: dict = {}
         self.trust = TrustTracker()
         self.quests = QuestTracker()
@@ -2614,13 +2616,18 @@ class NpcServer:
         day: int | None = None,
         npc_conversation: bool = True,
         npc_conversation_turns: int = 1,
-        fast: bool = True,  # 빠른 모드 — propagation transform 생략 (LLM 호출 ↓ 큰 속도)
+        fast: bool | None = None,  # None이면 content_distortion 토글을 따름 (T키). True=전파 변환 생략.
     ) -> dict:
         """하루치 정보 전파 시뮬레이션 + 1쌍 NPC-NPC 자율 대화.
 
         - 1단계: propagation (전파). fast=True면 페르소나 변환 LLM 생략.
         - 2단계: graph 무작위 페어 → simulate_conversation (자율 대화는 유지).
+
+        fast 미지정(None) 시 런타임 토글 self.content_distortion을 따름.
+        prime tick 등 명시적으로 fast=True를 넘긴 호출은 토글과 무관하게 빠름.
         """
+        if fast is None:
+            fast = not self.content_distortion
         if self.graph is None:
             return {"day": self.day, "events": [], "error": "관계 그래프 없음"}
         if day is None:
@@ -2644,10 +2651,16 @@ class NpcServer:
             other_events = [e for e in events if not e.get("player_origin")]
             # 플레이어 발화 전파를 우선 표시 (시연 핵심)
             for e in player_events[:5]:
+                # 내용 왜곡 ON이면 원문→변형 둘 다 (왜곡이 눈에 보이게). OFF면 변형만.
+                if self.content_distortion:
+                    body = (
+                        f"원문 \"{e['original'][:35]}\" → 변형 \"{e['transformed'][:35]}\""
+                    )
+                else:
+                    body = f"\"{e['transformed'][:45]}\""
                 pipeline_log.log(
                     "spread",
-                    f"Day{day}: {e['from']} → {e['to']}  [플레이어 정보 전파] "
-                    f"\"{e['transformed'][:45]}\"",
+                    f"Day{day}: {e['from']} → {e['to']}  [플레이어 정보 전파] {body}",
                     day=day, frm=e["from"], to=e["to"], player_origin=True,
                 )
             # 그 외 전파는 요약만

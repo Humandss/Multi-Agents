@@ -161,4 +161,11 @@ namespace NpcChat
         public int completed;
         public QuestCompleteResponse[] results;
     }
+
+    /// <summary>POST /debug/toggle_transform 응답 (T키 — 내용 왜곡 ON/OFF).</summary>
+    [Serializable]
+    public class ToggleTransformResponse
+    {
+        public bool content_distortion;
+    }
 }

@@ -41,6 +41,10 @@ namespace NpcChat
         [Header("디버그/시연")]
         [Tooltip("진행 중인 모든 퀘스트 즉시 완료 (시연용 치트)")]
         public KeyCode completeAllKey = KeyCode.H;
+        [Tooltip("내용 왜곡(전파 시 LLM 재서술) ON/OFF 토글")]
+        public KeyCode toggleDistortionKey = KeyCode.T;
+        [Tooltip("현재 내용 왜곡 상태 (읽기용, 서버와 동기화)")]
+        public bool contentDistortion = false;
 
         [Header("상태 (읽기용)")]
         public string currentNpc = "";
@@ -49,6 +53,8 @@ namespace NpcChat
         public event Action OnQuestsChanged;
         /// <summary>완료 성공 시 (entry, NPC 반응 대사). 대화창 표시용.</summary>
         public event Action<QuestEntry, string> OnQuestCompleted;
+        /// <summary>내용 왜곡 토글 시 (새 상태). 대화창 표시용.</summary>
+        public event Action<bool> OnDistortionToggled;
 
         void Awake()
         {
@@ -63,9 +69,16 @@ namespace NpcChat
 
         void Update()
         {
-            // H키 — 진행 중 퀘스트 전체 완료 (시연 치트). 채팅 입력 중엔 무시.
-            if (Input.GetKeyDown(completeAllKey) && !IsInputFieldFocused())
+            // 채팅 입력 중엔 단축키 무시 (타이핑과 충돌 방지).
+            if (IsInputFieldFocused()) return;
+
+            // H키 — 진행 중 퀘스트 전체 완료 (시연 치트).
+            if (Input.GetKeyDown(completeAllKey))
                 StartCoroutine(CompleteAllCoroutine());
+
+            // T키 — 내용 왜곡 ON/OFF 토글 (전파 시 LLM 재서술).
+            if (Input.GetKeyDown(toggleDistortionKey))
+                StartCoroutine(ToggleDistortionCoroutine());
         }
 
         static bool IsInputFieldFocused()
@@ -120,6 +133,34 @@ namespace NpcChat
                 // 현재 NPC 리스트 서버 동기화
                 if (!string.IsNullOrEmpty(currentNpc))
                     FetchQuestsFor(currentNpc);
+            }
+        }
+
+        /// <summary>내용 왜곡(전파 시 LLM 재서술) ON/OFF 토글 (T키).</summary>
+        IEnumerator ToggleDistortionCoroutine()
+        {
+            string url = $"http://{serverHost}:{serverPort}/debug/toggle_transform";
+            using (var req = UnityWebRequest.PostWwwForm(url, ""))
+            {
+                req.timeout = 15;
+                yield return req.SendWebRequest();
+
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogWarning($"[QuestManager] 왜곡 토글 실패: {req.error}");
+                    yield break;
+                }
+
+                try
+                {
+                    var resp = JsonUtility.FromJson<ToggleTransformResponse>(
+                        req.downloadHandler.text);
+                    if (resp != null) contentDistortion = resp.content_distortion;
+                }
+                catch { }
+
+                Debug.Log($"[QuestManager] T키 — 내용 왜곡 {(contentDistortion ? "ON" : "OFF")}");
+                OnDistortionToggled?.Invoke(contentDistortion);
             }
         }
 

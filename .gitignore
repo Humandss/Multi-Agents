@@ -126,3 +126,5 @@ ai/.env.local
 .claude/
 
 ai/data/chroma_demo/
+*.pdf
+*.md

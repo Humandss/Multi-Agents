@@ -357,6 +357,21 @@ def create_app() -> FastAPI:
                         results.append({"quest_id": q["id"], "error": str(e)})
         return JSONResponse({"completed": len(results), "results": results})
 
+    @app.post("/debug/toggle_transform")
+    def debug_toggle_transform():
+        """디버그/시연용 — 내용 왜곡(전파 시 LLM 페르소나 재서술) ON/OFF 토글 (Unity T키).
+
+        OFF(기본): 빠른 모드. 전파 시 내용 보존, 중요도만 왜곡.
+        ON: 전파될 때 LLM이 NPC 말투로 내용을 재서술 → 소문 변형이 눈에 보임 (느려짐).
+        """
+        engine.content_distortion = not engine.content_distortion
+        pipeline_log.log(
+            "spread",
+            f"내용 왜곡 {'ON' if engine.content_distortion else 'OFF'} (T키 토글)",
+            content_distortion=engine.content_distortion,
+        )
+        return JSONResponse({"content_distortion": engine.content_distortion})
+
     @app.get("/quests/{npc}")
     def quests_for_npc(npc: str):
         """특정 NPC의 퀘스트 리스트 (Unity 퀘스트 패널용).
