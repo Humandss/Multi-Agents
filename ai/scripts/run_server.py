@@ -21,8 +21,8 @@ def main():
     parser.add_argument("--reload", action="store_true")
     parser.add_argument("--no-reset", action="store_true",
                         help="기존 ChromaDB 메모리 유지 (기본은 매번 reset + 시드 재적재)")
-    parser.add_argument("--prime", type=int, default=3, metavar="N",
-                        help="시작 시 N tick 자동 실행 (기본 3). 끄려면 --prime 0")
+    parser.add_argument("--prime", type=int, default=0, metavar="N",
+                        help="시작 시 N tick 자동 실행 (기본 0=끔, 테스트용). 켜려면 --prime 3")
     args = parser.parse_args()
 
     # 기본 동작: 매번 reset + 시드 재적재. --no-reset 시 보존.

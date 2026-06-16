@@ -2,19 +2,19 @@
 # frequency: 하루에 두 NPC가 만나서 정보를 교환할 확률 (0.0 ~ 1.0)
 # 양방향 관계는 (A, B)로 한 번만 정의. simulator가 양쪽 모두로 처리.
 #
-# 시연 안정성을 위해 모두 0.9 — 한 tick에 정보가 거의 모든 NPC에 도달.
+# [테스트용 임시] 모두 1.0 — 매 tick 모든 쌍이 만나 한 tick에 전원 도달. (평소 0.9)
 
 edges:
-  - [mathilda, hermann, 0.9]
-  - [mathilda, finn, 0.9]
-  - [mathilda, bernhardt, 0.9]
-  - [mathilda, elias, 0.9]
+  - [mathilda, hermann, 1.0]
+  - [mathilda, finn, 1.0]
+  - [mathilda, bernhardt, 1.0]
+  - [mathilda, elias, 1.0]
 
-  - [finn, hermann, 0.9]
-  - [finn, bernhardt, 0.9]
-  - [finn, elias, 0.9]
+  - [finn, hermann, 1.0]
+  - [finn, bernhardt, 1.0]
+  - [finn, elias, 1.0]
 
-  - [bernhardt, hermann, 0.9]
-  - [bernhardt, elias, 0.9]
+  - [bernhardt, hermann, 1.0]
+  - [bernhardt, elias, 1.0]
 
-  - [hermann, elias, 0.9]
+  - [hermann, elias, 1.0]

@@ -8,7 +8,7 @@ echo   (Ctrl+C to stop, close window to kill)
 echo ============================================
 echo.
 
-python -m uv run python scripts/run_server.py --prime 3
+python -m uv run python scripts/run_server.py --prime 0
 
 echo.
 echo === server stopped ===

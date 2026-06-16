@@ -117,10 +117,10 @@ def _cut_to_last_sentence(text: str) -> str:
     # 마지막 종결 부호 위치 찾기
     last_end = max(text.rfind(c) for c in _SENT_ENDS)
     if last_end >= 0:
-        # 종결 후 자투리 있으면 잘림 — 종결까지만 유지
-        # 단 종결 직후 한 글자 정도면 무시 (자연스러운 응답 형태일 수도)
+        # 종결 부호 뒤에 남은 자투리는 max_new_tokens로 잘린 미완성 조각 → 1자라도 제거
+        # ("...있으신가오? 그" → "...있으신가오?")
         tail = text[last_end + 1:].strip()
-        if len(tail) >= 2:  # 2자 이상 미완성 꼬리만 자름
+        if len(tail) >= 1:
             return text[:last_end + 1]
     return text
 
@@ -356,6 +356,11 @@ _NPC_POSTFIX = {
         (re.compile(r"걱정이야(?=[\s.,!?]|$)"), "걱정이에요"),
         (re.compile(r"([가-힣])이야(?=[\s.,!?]|$)"), lambda m: m.group(1) + "이에요"),
         (re.compile(r"([가-힣])이지(?=[\s.,!?]|$)"), lambda m: m.group(1) + "이죠"),
+        # 추가 반말 종결 leak → 존댓말 (거야/거든/보자구)
+        (re.compile(r"거야(?=[\s.,!?]|$)"), "거예요"),     # 궁금하신 거야? → 거예요?
+        (re.compile(r"거든(?=[\s.,!?]|$)"), "거든요"),     # 느껴졌거든 → 거든요
+        (re.compile(r"보자구\b"), "봐요"),                  # 나눠보자구 → 나눠봐요
+        (re.compile(r"하자구\b"), "해요"),
         # "없대" / "있대" 같은 어색한 줄임 → 자연
         (re.compile(r"없대\s+보이는데"), "없어 보이는데"),
         (re.compile(r"있대\s+보이는데"), "있어 보이는데"),
@@ -387,6 +392,9 @@ _NPC_POSTFIX = {
         # hermann은 반말. 존댓말 leak 시 반말로 강제.
         # 0) 응답 시작 정중 감탄사 → "어"
         (re.compile(r"^(네|예|네네|예예)([\s,]+)"), r"어\2"),
+        # 0-1) 경상도 사투리 의문 어미 "-노?"는 스펙 외(어미는 해/지/야) → 반말로 교정
+        (re.compile(r"하노\?"), "해?"),                                # 원하노?→원해?, 뭐하노?→뭐해?
+        (re.compile(r"([가-힣])노\?"), lambda m: m.group(1) + "냐?"),  # 가노?→가냐?, 먹노?→먹냐?
         # 1) 흔한 정중 표현 → 반말
         (re.compile(r"아니요\b"), "아니"),
         (re.compile(r"아니에요\b"), "아니"),
@@ -475,6 +483,18 @@ _NPC_POSTFIX = {
         (re.compile(r"추천드립니다\b"), "추천한다"),
         (re.compile(r"추천드려요?\b"), "추천한다"),
         (re.compile(r"([가-힣])십니까\?"), lambda m: m.group(1) + "냐?"),
+        # 존댓말 의문 leak → 반말 (헤르만은 반말 전용)
+        (re.compile(r"드릴까요\?"), "줄까?"),                            # 도와드릴까요? → 도와줄까?
+        (re.compile(r"까요\?"), "까?"),                                  # 할까요? → 할까?
+        (re.compile(r"합니까\?"), "해?"),                                # 필요합니까? → 필요해?
+        (re.compile(r"([가-힣])습니까\?"), lambda m: m.group(1) + "어?"),  # 있습니까? → 있어?
+        # 하오체(-오/-소, 엘리아스 말투) leak → 반말 (헤르만은 사극체도 금지)
+        (re.compile(r"하오\?"), "해?"),
+        (re.compile(r"하오(?=[\s.,!?]|$)"), "해"),                        # 조심해야 하오 → 해
+        (re.compile(r"나오\?"), "나?"),                                  # 기억나오? → 기억나?
+        (re.compile(r"겠소\?"), "겠어?"),                                # 않았겠소? → 않았겠어?
+        (re.compile(r"겠소(?=[\s.,!?]|$)"), "겠어"),
+        (re.compile(r"([가-힣])소\?"), lambda m: m.group(1) + "어?"),    # 있소? → 있어?
         (re.compile(r"(이|있|없)어요\b"), lambda m: m.group(1) + "어"),
         # quest description 명령형 → 반말 (순서 중요: 긴 패턴 먼저)
         (re.compile(r"([가-힣])해주세요\b"), lambda m: m.group(1) + "해줘"),
@@ -1070,14 +1090,14 @@ KO_NPC_NAME = {
 
 # 전파받은 플레이어 사건을 인사에서 언급하는 template.
 # 규칙: 오늘(tick 직후) 받은 소식만 + 1회만 (mentioned 마커).
-# {src} = 전해준 NPC, {content} = 플레이어 발화 원문.
-# 조사 안전: 에게/한테/님/의 는 받침 무관.
+# {src} = 전해준 NPC, {content} = 전언용 평서체('~다', _to_reported로 변환).
+# 조사 안전: 에게/한테/님/의 는 받침 무관. 1인칭 원문 인용 대신 자연스러운 전언으로 이어짐.
 NPC_EVENT_MENTION = {
-    "elias": " 그나저나 {src}에게 들었소만, 그대가 '{content}'라 했다지.",
-    "hermann": " 아 맞다, {src}한테 들었는데 너 '{content}'라며?",
-    "mathilda": " 그나저나 {src} 님한테 들었는데, '{content}'라면서요?",
-    "finn": " 바람결에 {src}의 이야기를 들었노라. 그대가 '{content}'라 하였다지.",
-    "bernhardt": " 참, {src} 님께 들었습니다만 '{content}'라고요.",
+    "elias": " 그나저나 {src}에게 들었소만, 그대가 {content}고 하였다지.",
+    "hermann": " 아 맞다, {src}한테 들었는데 너 {content}며?",
+    "mathilda": " 그나저나 {src} 님한테 들었는데, {content}면서요?",
+    "finn": " 바람결에 {src}에게 들었노라. 그대가 {content}고 하였다지.",
+    "bernhardt": " 참, {src} 님께 들었습니다만, 그대가 {content}고요?",
 }
 
 # 자기소개(이름) 전파 언급 — 발화 원문 인용 대신 "성함은 들었다" 형태.
@@ -1089,6 +1109,44 @@ NPC_NAME_HEARD_MENTION = {
     "finn": " 그대의 이름은 {src}에게 들어 알고 있노라.",
     "bernhardt": " 성함은 {src} 님께 들었습니다.",
 }
+
+
+# 플레이어 1인칭 발화 → 전언용 평서체('~다'). 전파 소식 언급이 자연스럽게 이어지도록.
+# 예: "제가 이 마을 근처에서 큰 곰을 봤어요!" → "이 마을 근처에서 큰 곰을 봤다"
+_REPORTED_SUBJECT = re.compile(r"^(제가|저는|내가|나는|저|나)\s+")
+
+
+_GREETING_PREFIX = re.compile(
+    r"^(안녕하세요|안녕히\s*계세요|안녕|반가워요|반갑습니다|반가워|"
+    r"저기요|저기|실례합니다|실례지만|여보세요|있잖아요|있죠)[\s,.!?]*"
+)
+
+
+def _to_reported(text: str) -> str:
+    t = text.strip().strip("\"'").rstrip(" !?.~")
+    t = _GREETING_PREFIX.sub("", t)      # "안녕하세요. 제가…" → "제가…" (인사말 제거)
+    t = _REPORTED_SUBJECT.sub("", t)     # "제가 …" → "…"
+    for suf, rep in (("이에요", "이다"), ("습니다", "다"), ("예요", "다"),
+                     ("거든요", "다"), ("거든", "다"), ("더라고요", "더라"), ("더라구요", "더라"),
+                     ("해요", "하다"), ("어요", "다"), ("아요", "다")):
+        if t.endswith(suf):
+            return t[: -len(suf)] + rep
+    if t.endswith("요"):       # 미매칭 안전장치 — 최소한 '요' 제거
+        return t[:-1]
+    return t
+
+
+def _fix_addressee(text: str, speaker_ko: str, partner_ko: str, topic_text: str = "") -> str:
+    """2인 대화에서 상대를 엉뚱한 NPC 이름+호칭으로 부르는 오류 교정.
+
+    화자도 상대도 아니고 화제에도 없는 NPC 이름에 호칭(씨/님/양반)이 붙으면
+    잘못 부른 것 → 상대 이름으로 교체. (화제 속 제3자는 건드리지 않음)
+    """
+    for name in KO_NPC_NAME.values():
+        if name in (speaker_ko, partner_ko) or name in topic_text:
+            continue
+        text = re.sub(rf"{re.escape(name)}\s*(씨|님|양반)", f"{partner_ko} \\1", text)
+    return text
 
 # 오늘 한 자율 대화를 인사에서 언급하는 template (1회, 당일만).
 # general = 그냥 대화했다 / about_player = 플레이어 얘기가 화제였다.
@@ -1407,6 +1465,9 @@ class NpcServer:
         self.day = 0
         # 내용 왜곡 — 전파 시 LLM이 NPC 말투로 재서술. 기본 OFF(빠름). Unity T키로 토글.
         self.content_distortion = False
+        # NPC-NPC 자율대화 — 품질이 약해(작은 모델 자유 생성) 데모 기본 OFF.
+        # 마을 생동감은 인게임 화면(배회)으로, 콘솔은 전파·통찰만 깔끔하게.
+        self.autonomous_dialogue = False
         self._transform_cache: dict = {}
         self.trust = TrustTracker()
         self.quests = QuestTracker()
@@ -1512,7 +1573,7 @@ class NpcServer:
             raise ValueError(f"알 수 없는 NPC: {npc}")
 
         # ① 발화 — 플레이어가 NPC에게 말함
-        pipeline_log.log("utter", f'{npc} ← 플레이어: "{user_text[:60]}"',
+        pipeline_log.log("utter", f'{npc} ← 플레이어: "{user_text[:500]}"',
                          npc=npc, text=user_text[:120])
 
         t0 = time.time()
@@ -1602,7 +1663,7 @@ class NpcServer:
                     label = src_label.get(src, src)
                     frm = meta.get("from")  # 전파/대화 출처 NPC
                     other = meta.get("other_npc")  # NPC-NPC 대화 상대
-                    txt = m["text"][:55]
+                    txt = m["text"][:500]
                     if frm:  # propagation — 누구에게 들었나
                         recall_summary.append(f"[{label}|{frm}한테] {txt}")
                         has_from_other = True
@@ -1665,7 +1726,7 @@ class NpcServer:
         latency_ms = int((time.time() - t0) * 1000)
 
         # ④ 언급 — NPC 최종 응답
-        pipeline_log.log("recall", f'{npc} → 플레이어: "{text[:60]}" ({latency_ms}ms)',
+        pipeline_log.log("recall", f'{npc} → 플레이어: "{text[:500]}" ({latency_ms}ms)',
                          npc=npc, response=text[:120], latency_ms=latency_ms)
 
         # Quest는 응답에서 생성하지 않음 — 플레이어 주도 propose_quest 흐름이 정식 경로.
@@ -1929,7 +1990,7 @@ class NpcServer:
             if best is None or imp > best["importance"]:
                 best = {
                     "id": mid,
-                    "content": m.group(1),
+                    "content": _to_reported(m.group(1)),
                     "src": meta.get("from", ""),
                     "importance": imp,
                     "has_personal": bool(meta.get("has_personal")),
@@ -2277,8 +2338,9 @@ class NpcServer:
         opener_prompt = (
             f"당신은 지금 마을에서 {ko_b}을(를) 만났습니다. "
             f"다음 화제로 자연스럽게 말을 거시오 (인사 + 화제 제기, 한두 문장).\n"
-            f"규칙: 눈앞의 상대는 {ko_b}이고, 화제 속 인물과 혼동하지 마시오. "
-            f"자기 자신({ko_a})을 3인칭으로 말하지 마시오.\n"
+            f"규칙: 눈앞의 상대는 {ko_b}입니다. 상대를 부를 땐 반드시 '{ko_b}'라고만 하고 "
+            f"다른 사람 이름으로 부르지 마시오. 화제 속 인물과 혼동하지 말고, "
+            f"자기 자신({ko_a})을 3인칭으로 말하지 마시오. 당신의 성격과 말투를 유지하시오.\n"
             f"화제: {topic_clean}"
         )
         a_messages = [
@@ -2286,6 +2348,7 @@ class NpcServer:
             {"role": "user", "content": opener_prompt},
         ]
         first_text = self._generate_for_npc(npc_a, a_messages, max_new_tokens=45)
+        first_text = _fix_addressee(first_text, ko_a, ko_b, topic_clean)
         turns.append({"speaker": npc_a, "speaker_ko": ko_a, "text": first_text})
 
         # 각 NPC 시점의 대화 history (chat format)
@@ -2298,7 +2361,8 @@ class NpcServer:
             {"role": "system", "content": self._build_system_prompt(npc_b)},
             {"role": "user", "content":
                 f"{ko_a}가 당신에게 말했다: \"{first_text}\"\n"
-                f"(한두 문장으로 답하시오. 자기 자신({ko_b})을 3인칭으로 말하지 마시오.)"},
+                f"(눈앞의 상대는 {ko_a}입니다. 상대를 '{ko_a}'라고만 부르고 다른 이름으로 부르지 마시오. "
+                f"한두 문장으로 당신의 성격을 유지해 답하시오. 자기 자신({ko_b})을 3인칭으로 말하지 마시오.)"},
         ]
 
         last_speaker = npc_a
@@ -2311,6 +2375,7 @@ class NpcServer:
 
             hist = b_history if responder == npc_b else a_history
             response = self._generate_for_npc(responder, hist, max_new_tokens=45)
+            response = _fix_addressee(response, ko_responder, ko_other, topic_clean)
             turns.append({
                 "speaker": responder, "speaker_ko": ko_responder, "text": response
             })
@@ -2365,12 +2430,12 @@ class NpcServer:
         # ○ 자율대화 로그 — 두 NPC가 나눈 대화 + 양쪽 메모리 저장
         pipeline_log.log(
             "chat",
-            f"Day{self.day}: {npc_a} ↔ {npc_b}  (주제: {topic[:40]})",
+            f"Day{self.day}: {npc_a} ↔ {npc_b}  (주제: {topic[:500]})",
             npc_a=npc_a, npc_b=npc_b, day=self.day,
         )
         for t in turns:
             ko = t.get("speaker_ko", t["speaker"])
-            pipeline_log.log("chat", f"   └ {ko}: {t['text'][:55]}", detail=True)
+            pipeline_log.log("chat", f"   └ {ko}: {t['text'][:500]}", detail=True)
         pipeline_log.log("chat", f"   → {npc_a}, {npc_b} 양쪽 메모리에 저장", detail=True)
 
         return {
@@ -2614,20 +2679,23 @@ class NpcServer:
     def tick(
         self,
         day: int | None = None,
-        npc_conversation: bool = True,
+        npc_conversation: bool | None = None,  # None이면 autonomous_dialogue 플래그 따름 (기본 OFF).
         npc_conversation_turns: int = 1,
         fast: bool | None = None,  # None이면 content_distortion 토글을 따름 (T키). True=전파 변환 생략.
     ) -> dict:
-        """하루치 정보 전파 시뮬레이션 + 1쌍 NPC-NPC 자율 대화.
+        """하루치 정보 전파 시뮬레이션 + (옵션) 1쌍 NPC-NPC 자율 대화.
 
         - 1단계: propagation (전파). fast=True면 페르소나 변환 LLM 생략.
-        - 2단계: graph 무작위 페어 → simulate_conversation (자율 대화는 유지).
+        - 2단계: graph 무작위 페어 → simulate_conversation. autonomous_dialogue=False면 생략.
 
-        fast 미지정(None) 시 런타임 토글 self.content_distortion을 따름.
-        prime tick 등 명시적으로 fast=True를 넘긴 호출은 토글과 무관하게 빠름.
+        npc_conversation/fast 미지정(None) 시 런타임 플래그(autonomous_dialogue/
+        content_distortion)를 따름. 자율대화는 품질이 약해 데모 기본 OFF — 인게임
+        화면(NPC 배회/상호작용)으로 마을 생동감을 보이고, 콘솔은 전파·통찰만 표시.
         """
         if fast is None:
             fast = not self.content_distortion
+        if npc_conversation is None:
+            npc_conversation = self.autonomous_dialogue
         if self.graph is None:
             return {"day": self.day, "events": [], "error": "관계 그래프 없음"}
         if day is None:
@@ -2654,10 +2722,10 @@ class NpcServer:
                 # 내용 왜곡 ON이면 원문→변형 둘 다 (왜곡이 눈에 보이게). OFF면 변형만.
                 if self.content_distortion:
                     body = (
-                        f"원문 \"{e['original'][:35]}\" → 변형 \"{e['transformed'][:35]}\""
+                        f"원문 \"{e['original'][:500]}\" → 변형 \"{e['transformed'][:500]}\""
                     )
                 else:
-                    body = f"\"{e['transformed'][:45]}\""
+                    body = f"\"{e['transformed'][:500]}\""
                 pipeline_log.log(
                     "spread",
                     f"Day{day}: {e['from']} → {e['to']}  [플레이어 정보 전파] {body}",

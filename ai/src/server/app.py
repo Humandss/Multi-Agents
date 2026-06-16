@@ -93,7 +93,7 @@ def create_app() -> FastAPI:
         print(f"[app] --prime {prime_ticks} — {prime_ticks} tick 자동 실행 중...")
         for i in range(prime_ticks):
             try:
-                result = engine.tick(npc_conversation=True, npc_conversation_turns=1, fast=True)
+                result = engine.tick(npc_conversation=False, npc_conversation_turns=1, fast=True)
                 refl = result.get("reflection", {})
                 refl_count = len(refl.get("reflections", [])) if refl else 0
                 print(f"[app] prime tick {i+1}: events={len(result.get('events', []))}, "
@@ -259,7 +259,7 @@ def create_app() -> FastAPI:
         results = []
         for i in range(ticks):
             try:
-                result = engine.tick(npc_conversation=True, npc_conversation_turns=1, fast=True)
+                result = engine.tick(npc_conversation=False, npc_conversation_turns=1, fast=True)
                 results.append({
                     "day": result["day"],
                     "events": len(result.get("events", [])),
@@ -446,9 +446,10 @@ def create_app() -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/tick")
-    def tick_http(npc_conversation: bool = True, num_turns: int = 2):
-        """시간 진행 (HTTP). propagation + NPC-NPC 자율 대화.
+    def tick_http(npc_conversation: bool | None = None, num_turns: int = 2):
+        """시간 진행 (HTTP). propagation + (옵션) NPC-NPC 자율 대화.
 
+        npc_conversation 미지정(None)이면 engine.autonomous_dialogue 플래그(기본 OFF)를 따름.
         응답은 WebSocket tick_events와 동일하게 평탄화 (Unity JsonUtility 호환).
         """
         try:

@@ -349,6 +349,70 @@ def _plot_sweep(results, freqs, max_tick, total):
         print(f"[matplotlib 미설치 — CSV로 그래프 그리면 됨]  ({e})")
 
 
+PERSONA_FACTOR = {"hermann": 1.00, "mathilda": 0.95, "finn": 1.15,
+                  "bernhardt": 0.90, "elias": 0.70}
+
+
+def origin_sweep_run(base_graph, npcs, args, origins):
+    """출처 NPC를 바꿔가며 확산 비교 — 성격별 중요도 보정이 전파에 주는 영향.
+
+    동일 시드 → meeting 패턴은 같고 성격(보정 계수)만 다르므로, 곡선 차이는
+    온전히 페르소나 효과(릴레이 가능/차단)에서 비롯된다.
+    """
+    total = len(npcs)
+    f = args.freq if args.freq is not None else 0.3
+    graph = RelationGraph([(a, b, f) for a, b, _ in base_graph.edges()])
+    results = {}
+    print(f"[eval] 출처 성격별 확산 — 접촉빈도 {f}, 동일 시드(만남 동일·성격만 차이)\n")
+    for origin in origins:
+        if origin not in npcs:
+            print(f"  (건너뜀: '{origin}' 없음)")
+            continue
+        curve, _a, _rf, _tr = run_diffusion(
+            graph, npcs, fact=args.fact, keyword=args.keyword,
+            importance=args.importance, inject_to=origin, ticks=args.ticks, seed=args.seed)
+        results[origin] = curve
+        last_tick, final = curve[-1]
+        fac = PERSONA_FACTOR.get(origin, 1.0)
+        done = f"{last_tick}틱에 전원" if final == total else f"{args.ticks}틱 후 {final}/{total}"
+        print(f"  {origin} (×{fac:.2f}): {done}")
+
+    if not results:
+        return
+    max_tick = max(c[-1][0] for c in results.values())
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(RESULTS_DIR / "diffusion_by_origin.csv", "w", newline="", encoding="utf-8-sig") as fp:
+        w = csv.writer(fp)
+        w.writerow(["tick"] + list(results.keys()))
+        for t in range(max_tick + 1):
+            w.writerow([t] + [_series(results[o], max_tick, total)[t] for o in results])
+    print(f"\n[저장] {RESULTS_DIR / 'diffusion_by_origin.csv'}")
+    _plot_origin_sweep(results, max_tick, total)
+
+
+def _plot_origin_sweep(results, max_tick, total):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        plt.figure(figsize=(6.4, 4.2))
+        for origin in results:
+            ys = _series(results[origin], max_tick, total)
+            fac = PERSONA_FACTOR.get(origin, 1.0)
+            plt.plot(range(max_tick + 1), ys, "o-", label=f"{origin} (x{fac:.2f})")
+        plt.xlabel("tick (N-key presses)")
+        plt.ylabel("# NPCs who know")
+        plt.title("Information diffusion by source persona")
+        plt.ylim(0, total + 0.3)
+        plt.grid(alpha=0.3)
+        plt.legend(title="origin (importance factor)")
+        plt.savefig(RESULTS_DIR / "diffusion_by_origin.png", dpi=130, bbox_inches="tight")
+        print(f"[저장] {RESULTS_DIR / 'diffusion_by_origin.png'}")
+    except Exception as e:
+        print(f"[matplotlib 미설치 — CSV로 그래프 그리면 됨]  ({e})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--inject-to", default="hermann", help="사실을 처음 주입할 NPC")
@@ -363,6 +427,11 @@ def main():
     ap.add_argument("--freqs", type=str, default=None,
                     help="빈도 sweep (쉼표 구분, 예: 0.2,0.3,0.5) — 곡선 겹쳐 그리기")
     ap.add_argument("--seed", type=int, default=42, help="난수 시드 (재현용)")
+    ap.add_argument("--topology", choices=["complete", "chain", "hub"], default="complete",
+                    help="관계망 위상. complete=실제 그래프(전원 직접 연결), "
+                         "chain=일렬(다단계 릴레이 전파가 뚜렷), hub=마틸다(허브) 중심")
+    ap.add_argument("--origins", type=str, default=None,
+                    help="출처 NPC sweep (쉼표 구분 또는 'all'). 성격(중요도 보정)별 확산 차이 비교")
     args = ap.parse_args()
 
     if not RELATIONS_PATH.exists():
@@ -374,7 +443,26 @@ def main():
         print(f"[eval] --inject-to '{args.inject_to}' 가 그래프에 없음. 가능: {npcs}")
         return
 
-    if args.freqs:
+    # 위상 오버라이드 — 릴레이 전파를 명확히 보이려면 sparse 위상 사용 (그림용 illustrative).
+    if args.topology != "complete":
+        f = args.freq if args.freq is not None else 0.9
+        if args.topology == "chain":
+            order = [n for n in ["hermann", "bernhardt", "mathilda", "finn", "elias"] if n in npcs]
+            edges = [(order[i], order[i + 1], f) for i in range(len(order) - 1)]
+        else:  # hub — 마틸다(정보 허브) 중심
+            hub = "mathilda" if "mathilda" in npcs else npcs[0]
+            edges = [(hub, n, f) for n in npcs if n != hub]
+        base_graph = RelationGraph(edges)
+        npcs = base_graph.all_npcs()
+        print(f"[eval] 위상: {args.topology} (엣지 {len(edges)}개, 빈도 {f})")
+
+    if args.origins:
+        if args.origins.strip() == "all":
+            origins = sorted(npcs, key=lambda n: -PERSONA_FACTOR.get(n, 1.0))
+        else:
+            origins = [o.strip() for o in args.origins.split(",") if o.strip()]
+        origin_sweep_run(base_graph, npcs, args, origins)
+    elif args.freqs:
         freqs = [float(x) for x in args.freqs.split(",") if x.strip()]
         sweep_run(base_graph, npcs, args, freqs)
     else:
